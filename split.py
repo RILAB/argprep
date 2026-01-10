@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""
+VCF splitter / filter with END-span expansion
+
+This script reads a VCF (optionally gzipped) and writes each record
+to EXACTLY ONE of three output files:
+
+  <prefix>.inv
+  <prefix>.filtered
+  <prefix>.clean
+
+Key feature:
+- Any record with INFO containing END= is EXPANDED so that the record
+  is replicated for every base position from POS to END (inclusive).
+
+⚠️ WARNING:
+Expanding END spans can massively increase file size if END-POS is large.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+from pathlib import Path
+from typing import TextIO
+
+
+# Valid single-base SNP alleles
+VALID_BASES = {"A", "C", "G", "T"}
+
+
+# ------------------------------------------------------------
+# Utility: open plain-text or gzipped files transparently
+# ------------------------------------------------------------
+def open_maybe_gzip(path: str, mode: str) -> TextIO:
+    """
+    Open a file that may or may not be gzipped.
+
+    Parameters
+    ----------
+    path : str
+        Path to file (.vcf or .vcf.gz)
+    mode : str
+        Text mode: "rt" for reading, "wt" for writing
+
+    Returns
+    -------
+    TextIO
+    """
+    if path.endswith(".gz"):
+        return gzip.open(path, mode)  # type: ignore
+    return open(path, mode, encoding="utf-8")
+
+
+# ------------------------------------------------------------
+# INFO field parsers
+# ------------------------------------------------------------
+def extract_dp(info: str) -> int | None:
+    """
+    Extract integer DP value from the INFO column.
+
+    Returns
+    -------
+    int : DP value if present and parseable
+    None : if INFO=".", DP missing, or malformed
+    """
+    if info == ".":
+        return None
+
+    for field in info.split(";"):
+        if field.startswith("DP="):
+            try:
+                return int(field.split("=", 1)[1])
+            except ValueError:
+                return None
+
+    return None
+
+
+def extract_end(info: str) -> int | None:
+    """
+    Extract integer END value from the INFO column.
+
+    Returns
+    -------
+    int : END value if present and parseable
+    None : if INFO="." or END missing/malformed
+    """
+    if info == ".":
+        return None
+
+    for field in info.split(";"):
+        if field.startswith("END="):
+            try:
+                return int(field.split("=", 1)[1])
+            except ValueError:
+                return None
+
+    return None
+
+
+# ------------------------------------------------------------
+# Main driver
+# ------------------------------------------------------------
+def main() -> None:
+    """
+    Main entry point.
+    Handles argument parsing, file routing, and record classification.
+    """
+
+    # ---------------- Argument parsing ----------------
+    ap = argparse.ArgumentParser(
+        description="Split/filter a VCF into inv/filtered/clean, expanding END spans."
+    )
+    ap.add_argument(
+        "vcf",
+        help="Input VCF (.vcf or .vcf.gz)"
+    )
+    ap.add_argument(
+        "--depth",
+        type=int,
+        required=True,
+        help="Depth threshold: DP < depth => filtered"
+    )
+    ap.add_argument(
+        "--out-prefix",
+        default=None,
+        help="Output prefix (default: input filename without .vcf/.vcf.gz)"
+    )
+    args = ap.parse_args()
+
+    in_path = args.vcf
+    depth = args.depth
+
+    # ---------------- Output prefix logic ----------------
+    if args.out_prefix:
+        prefix = args.out_prefix
+    else:
+        # Strip .vcf or .vcf.gz from input name
+        p = Path(in_path)
+        name = p.name
+        if name.endswith(".vcf.gz"):
+            name = name[:-7]
+        elif name.endswith(".vcf"):
+            name = name[:-4]
+        prefix = str(p.with_name(name))
+
+    out_inv = prefix + ".inv"
+    out_filt = prefix + ".filtered"
+    out_clean = prefix + ".clean"
+
+    # ---------------- Open files ----------------
+    with open_maybe_gzip(in_path, "rt") as fin, \
+         open(out_inv, "wt", encoding="utf-8") as f_inv, \
+         open(out_filt, "wt", encoding="utf-8") as f_filt, \
+         open(out_clean, "wt", encoding="utf-8") as f_clean:
+
+        # Iterate over each line in the VCF
+        for raw in fin:
+
+            # ---------- Header lines ----------
+            # Copy headers to ALL outputs unchanged
+            if raw.startswith("#"):
+                f_inv.write(raw)
+                f_filt.write(raw)
+                f_clean.write(raw)
+                continue
+
+            # Remove trailing newline and split into columns
+            line = raw.rstrip("\n")
+            cols = line.split("\t")
+
+            # ---------- Malformed line ----------
+            # Less than 8 columns means INFO is missing
+            if len(cols) < 8:
+                f_filt.write(line + "\n")
+                continue
+
+            # VCF columns (0-based):
+            # 0 CHROM
+            # 1 POS
+            # 2 ID
+            # 3 REF
+            # 4 ALT
+            # 5 QUAL
+            # 6 FILTER
+            # 7 INFO
+            ref = cols[3]
+            alt_field = cols[4]
+            info = cols[7]
+
+            # ============================================================
+            # 1) .inv (highest priority)
+            # ============================================================
+            # Conditions:
+            # - INFO == "."
+            # - OR INFO contains END=
+            #
+            # If END= exists, EXPAND the record across POS..END inclusive
+            # by replicating the line and only modifying the POS column.
+            end_val = extract_end(info)
+
+            if info == "." or end_val is not None:
+
+                # No END → write once
+                if end_val is None:
+                    f_inv.write(line + "\n")
+                    continue
+
+                # Parse starting POS
+                try:
+                    pos0 = int(cols[1])
+                except ValueError:
+                    # If POS is malformed, write line once without expansion
+                    f_inv.write(line + "\n")
+                    continue
+
+                # If END <= POS, nothing to expand
+                if end_val <= pos0:
+                    f_inv.write(line + "\n")
+                    continue
+
+                # Expand POS..END inclusive
+                for pos in range(pos0, end_val + 1):
+                    cols[1] = str(pos)
+                    f_inv.write("\t".join(cols) + "\n")
+
+                continue  # ensure record goes ONLY to .inv
+
+            # ============================================================
+            # 2) .filtered
+            # ============================================================
+
+            # Parse ALT alleles
+            alts = alt_field.split(",") if alt_field != "." else []
+
+            # Remove <NON_REF> from all ALT-based logic
+            alts_no_nonref = [a for a in alts if a != "<NON_REF>"]
+
+            # DP-based filtering
+            dp = extract_dp(info)
+            dp_low = (dp is not None and dp < depth)
+
+            # Deletion allele
+            has_star = ("*" in alts_no_nonref)
+
+            # Multi-base REF allele (indel or MNV)
+            ref_long = (len(ref) > 1)
+
+            # Multiple SNP alleles (e.g., A,C)
+            valid_base_alts = [a for a in alts_no_nonref if a in VALID_BASES]
+            multiple_valid_bases = (len(set(valid_base_alts)) > 1)
+
+            # Any ALT allele that is not A/C/G/T/* (e.g., <DEL>, N, AT)
+            has_non_acgt_nonstar = any(
+                (a not in VALID_BASES) and (a != "*") for a in alts_no_nonref
+            )
+
+            if (
+                dp_low or
+                has_star or
+                ref_long or
+                multiple_valid_bases or
+                has_non_acgt_nonstar
+            ):
+                f_filt.write(line + "\n")
+                continue
+
+            # ============================================================
+            # 3) .clean (everything else)
+            # ============================================================
+            f_clean.write(line + "\n")
+
+
+if __name__ == "__main__":
+    main()
