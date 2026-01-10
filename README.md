@@ -12,6 +12,7 @@ Instructions for these steps are [here](https://github.com/baoxingsong/AnchorWav
 
 Assuming your gvcf is formatted like the [example file](https://github.com/RILAB/arg-ne/blob/main/test.vcf.gz).
 Run `split.py` using `python3 split.py --depth=<depth> <filename.vcf>`. 
+Normally you will want to set depth equal to your sample size. In some files depth is recorded as 30 for each individual, so you should set depth to 30 x sample size.
 
 This script writes three files, `.inv`, `.filtered`, and `.clean`. Each includes the regular header.
 File outputs will be large when unzipped, it is recommended to run with `--gzip-output` to automatically zip output files.
