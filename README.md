@@ -13,14 +13,14 @@ Instructions for these steps are [here](https://github.com/baoxingsong/AnchorWav
 
 Run `split.py` using `python3 split.py --depth=<depth> <filename.vcf>`. 
 
-This script write three files, `.inv`, `.filtered`, and `.clean`. Each includes the regular header.
+This script writes three files, `.inv`, `.filtered`, and `.clean`. Each includes the regular header.
 
 ##### `.inv` 
-Contains lines where `INFO` is `.` OR `INFO` contains `END=`, and expands `END=` lines for each bp. 
+Contains lines from vcf where `INFO` is `.` OR `INFO` contains `END=`, and expands `END=` lines for each bp. 
 This means the number of non-header lines (e.g. from `wc -l`) should represent the number of invariant bp in the file.
 
 ##### `.filtered`
-Contains lines where any of the following occur:
+Contains lines from vcf where any of the following occur:
 
 - `DP` is less than the `depth` parameter given
 - the line contains `*` as an allele
@@ -29,4 +29,4 @@ Contains lines where any of the following occur:
 - symbolic / non-ACGT alleles
 
 ##### `.clean`
-Should containt only biallelic SNPs passing all checks
+Should contain only biallelic SNPs in vcf passing all checks.
