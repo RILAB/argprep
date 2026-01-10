@@ -37,11 +37,12 @@ Should contain only biallelic SNPs in vcf passing all checks.
 
 ## 4 Prep for SINGER
 
-`.clean` will be the SNP data you give to SINGER. You will also need a `.bed` format file of bp that are masked. 
+`.clean` will be the SNP data you give to SINGER. 
+You will also need a `.bed` format file of bp that are masked. 
 Usually these are everything in your `.filtered` file.
 `filt_to_bed.py` will take a vcf and make a bedfile. 
 
-Run using: `python3 filt_to_bed.py <filtered vcf file> --merge`. 
+Run using: `python3 filt_to_bed.py <vcf file of filtered snps> --merge`. 
 Dropping the `--merge` will result in a bigger bedfile with many small, contiguous regions and is not recommended.
 
 ## 5 Run SINGER
