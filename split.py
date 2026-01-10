@@ -23,7 +23,7 @@ import argparse
 import gzip
 from pathlib import Path
 from typing import TextIO
-
+import sys
 
 # Valid single-base SNP alleles
 VALID_BASES = {"A", "C", "G", "T"}
@@ -107,6 +107,10 @@ def main() -> None:
     Main entry point.
     Handles argument parsing, file routing, and record classification.
     """
+    inv_bp = 0
+    filtered_bp = 0
+    clean_bp = 0
+
 
     # ---------------- Argument parsing ----------------
     ap = argparse.ArgumentParser(
@@ -126,6 +130,11 @@ def main() -> None:
         "--out-prefix",
         default=None,
         help="Output prefix (default: input filename without .vcf/.vcf.gz)"
+    )
+    ap.add_argument(
+        "--gzip-output",
+        action="store_true",
+        help="Gzip all output files (.gz)"
     )
     args = ap.parse_args()
 
@@ -150,10 +159,15 @@ def main() -> None:
     out_clean = prefix + ".clean"
 
     # ---------------- Open files ----------------
+    def open_out(path, gzip_output):
+        if gzip_output:
+            return gzip.open(path + ".gz", "wt")
+        return open(path, "wt")
+
     with open_maybe_gzip(in_path, "rt") as fin, \
-         open(out_inv, "wt", encoding="utf-8") as f_inv, \
-         open(out_filt, "wt", encoding="utf-8") as f_filt, \
-         open(out_clean, "wt", encoding="utf-8") as f_clean:
+        open_out(out_inv, args.gzip_output) as f_inv, \
+        open_out(out_filt, args.gzip_output) as f_filt, \
+        open_out(out_clean, args.gzip_output) as f_clean:
 
         # Iterate over each line in the VCF
         for raw in fin:
@@ -220,6 +234,8 @@ def main() -> None:
                     f_inv.write(line + "\n")
                     continue
 
+                span = end_val - pos0 + 1
+                inv_bp += span
                 # Expand POS..END inclusive
                 for pos in range(pos0, end_val + 1):
                     cols[1] = str(pos)
@@ -264,13 +280,19 @@ def main() -> None:
                 has_non_acgt_nonstar
             ):
                 f_filt.write(line + "\n")
+                filtered_bp += 1
                 continue
 
             # ============================================================
             # 3) .clean (everything else)
             # ============================================================
             f_clean.write(line + "\n")
-
+            clean_bp += 1
+            
+    print("Output summary (non-header bp):",file=sys.stderr)
+    print(f"  inv:      {inv_bp:,}",file=sys.stderr)
+    print(f"  filtered: {filtered_bp:,}",file=sys.stderr)
+    print(f"  clean:    {clean_bp:,}",file=sys.stderr)
 
 if __name__ == "__main__":
     main()
