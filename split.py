@@ -248,7 +248,7 @@ def main() -> None:
             # ============================================================
 
             # Parse ALT alleles
-            alts = alt_field.split(",") if alt_field != "." else []
+            alts = [a.strip() for a in alt_field.split(",")] if alt_field != "." else []
 
             # Remove <NON_REF> from all ALT-based logic
             alts_no_nonref = [a for a in alts if a != "<NON_REF>"]
