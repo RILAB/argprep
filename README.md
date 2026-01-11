@@ -8,8 +8,9 @@ Individual `.maf` files need to be converted to `.gvcf` and then combined to a s
 We recommend doing this separately by chromosome. 
 Instructions for these steps are [here](https://github.com/baoxingsong/AnchorWave/blob/master/doc/GATK.md).
 
-## 3 Clean gvcf
+## 3 Clean gvcf & prep for SINGER
 
+### 3A Clean gvcf 
 Assuming your gvcf is formatted like the [example file](https://github.com/RILAB/arg-ne/blob/main/test.vcf.gz) and is for a single chromosome. Please split any multi-chromosome gvcfs into individual chromosomes before continuing.
 
 Run `split.py` using `python3 split.py --depth=<depth> <filename.vcf>`. 
@@ -39,7 +40,7 @@ Contains lines from vcf where any of the following occur:
 ##### `.clean`
 Should contain only biallelic SNPs in vcf passing all checks as well as mutliallelic SNPs with no indels that will be filtered out by SINGER snakemake pipleine later.
 
-## 4 Prep for SINGER
+### 3B Prep for SINGER
 
 `.clean` will be the SNP data you give to SINGER. 
 You will also need a `.bed` format file of bp that are masked. 
@@ -49,12 +50,12 @@ Usually these are everything in your `.filtered` file.
 Run using: `python3 filt_to_bed.py <vcf file of filtered snps> --merge`. 
 Dropping the `--merge` will result in a bigger bedfile with many small, contiguous regions and is not recommended.
 
-## 5 Run SINGER
+## 4 Run SINGER
 
 Use Nate Pope's [snakemake pipeline](https://github.com/nspope/singer-snakemake/tree/main).
 Using the steps above, there is no need to have a filter file. 
 Use the bedfile made in step 4 as the mask bedfile. 
 
-## 6 Edit and validate ARG, estimate and validate Ne models
+## 5 Edit and validate ARG, estimate and validate Ne models
 
-This step requires interactive use of the jupyter notebook [argcheck.ipynb](argcheck.ipynb). You will need to have `msprime` `tskit` `tszip` `demes` `demesdraw` and `yaml` among other packages. There are many places in the notebood where you will need to **modify** the code or variables to suite your files/system. Example outputs for maize are shown in the notebook preview.
+This step requires interactive use of the jupyter notebook [argcheck.ipynb](argcheck.ipynb). You will need to have `msprime` `tskit` `tszip` `demes` `demesdraw` and `yaml` among other packages. There are many places in the notebook where you will need to **modify** the code or variables to suite your files/system. Example outputs for maize are shown in the notebook preview.
