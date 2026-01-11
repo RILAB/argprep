@@ -275,8 +275,7 @@ def main() -> None:
             if (
                 dp_low or
                 has_star or
-                ref_long or
-                multiple_valid_bases or
+                ref_long or # multiple_valid_bases or <- removed as multiallelic need to be filtered out by SINGER snakemake
                 has_non_acgt_nonstar
             ):
                 f_filt.write(line + "\n")
