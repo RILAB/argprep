@@ -25,6 +25,7 @@ from typing import TextIO
 import sys
 import datetime
 import getpass
+import time
 import platform
 import os
 from tqdm import tqdm
@@ -235,9 +236,25 @@ def main() -> None:
             gzip_output=args.gzip_output,
         )
     
-        pbar = tqdm(unit="records", mininterval=1.0)
+        record_count = 0
+        last_report_time = time.time()
         for raw in fin:
-            pbar.update(1)
+            record_count += 1
+            if record_count % 100_000 == 0:
+                fields = raw.rstrip("\n").split("\t")
+                if len(fields) >= 2:
+                    chrom, pos = fields[0], fields[1]
+                else:
+                    chrom, pos = "?", "?"
+
+                now = time.time()
+                rate = record_count / max(now - last_report_time, 1e-6)
+
+                sys.stderr.write(
+                    f"\r[progress] {record_count:,} records  @ chrom {chrom} Mb {int(pos)/1E6}  "
+                    f"({rate:,.0f} rec/s)"
+                )
+                sys.stderr.flush()
 
             # ---------------- Header handling ----------------
             if raw.startswith("#"):
@@ -362,7 +379,7 @@ def main() -> None:
             # ============================================================
             f_clean.write(line + "\n")
             clean_bp += 1
-        pbar.close()        
+
         print("Output summary (non-header bp):",file=sys.stderr)
         print(f"  inv:      {inv_bp:,}",file=sys.stderr)
         print(f"  filtered: {filtered_bp:,}",file=sys.stderr)
