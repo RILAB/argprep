@@ -36,7 +36,7 @@ This means the number of non-header lines (e.g. from `wc -l`) should represent t
 Contains lines from vcf where any of the following occur:
 
 - the line contains `*` as an allele
-- symbolic / non-ACGT alleles
+- symbolic / non-ACGT alleles. Among other things, this removes bp with `N`. This is OK if you have assemblies and you assume genotyping error is effectively zero. If you cannot assume that, then these alleles would need to go into `.clean` but the script cannot currently do that.
 - `DP` is less than the `depth` parameter given. Since we are using whole genome alignment we are assuming sites with DP < depth but no explicit indels "*" have missing data still due to structural variation of some sort and should be removed.
 
 ##### `.clean`
