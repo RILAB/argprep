@@ -1,3 +1,5 @@
+An overall visual guide to the pipeline we are developing is [Alt text](image-url "Optional title")
+
 ## 1 Align genomes to reference
 
 Align each assembly to the reference using [anchorwave](https://github.com/baoxingsong/AnchorWave).
