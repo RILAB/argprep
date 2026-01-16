@@ -1,3 +1,5 @@
+## Workflow Overview
+
 <img src="https://github.com/RILAB/arg-ne/blob/jri_test/pipeline_flow.png" alt="drawing" width="500"/>
 
 ## 1 Assemble a gvcf
@@ -21,7 +23,7 @@ The script can read both gzipped and unzipped vcfs.
 Run `split.py` using `python3 split.py --depth=<depth> <filename.vcf>`. 
 Normally you will want to set depth equal to your sample size. 
 In some files, for example, depth is recorded as 30 for each individual, so you should set depth to 30 x sample size.
-In addtioin, if you run the script with `--filter-multiallelic`, this will send multi-allelic sites to the `.filtered` file described below. 
+In addition, if you run the script with `--filter-multiallelic`, this will send multi-allelic sites to the `.filtered` file described below. 
 
 This script writes three files, `.inv`, `.filtered`, and `.clean`. Each includes the regular header.
 File outputs will be large when unzipped, it is recommended to run with `--gzip-output` to automatically zip output files.
@@ -45,7 +47,7 @@ Contains lines from vcf where any of the following occur:
 
 ##### `.clean`
 Should contain only biallelic SNPs in vcf passing all checks as well as mutliallelic SNPs with no indels that will be filtered out by SINGER snakemake pipleine later (and used to adjust the mutation rate). 
-If you run the script with `--filter-multiallelic` this will send multi-allelic site to the `.filtered` file instead. 
+**Note:** If you run the script with `--filter-multiallelic` this will send multi-allelic site to the `.filtered` file instead. 
 
 ### 2B Prep for SINGER
 
@@ -70,7 +72,7 @@ Some suggestions include:
 
 Use Nate Pope's [snakemake pipeline](https://github.com/nspope/singer-snakemake/tree/main).
 Using the steps above, there is no need to have a filter file. 
-Use the bedfile made in step 4 as the mask bedfile. 
+Use the bedfile made in step 2B as the mask bedfile. 
 
 ## 4 ARG processing and 5 Ne modeling (under construction)
 
