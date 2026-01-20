@@ -73,6 +73,7 @@ Some suggestions include:
 Use Nate Pope's [snakemake pipeline](https://github.com/nspope/singer-snakemake/tree/main).
 Using the steps above, there is no need to have a filter file. 
 Use the bedfile made in step 2B as the mask bedfile. 
+Please make sure your recombination 'hapmap' file extends to the end of the chromosome. 
 
 ## 4 ARG processing and 5 Ne modeling (under construction)
 
