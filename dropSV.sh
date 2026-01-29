@@ -70,7 +70,7 @@ cd cleangVCF
 
 for gvcf in $SRC/*.gvcf.gz; do
   bcftools view "$gvcf" | bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\n' |
-  awk -v cutoff=$cutoff -v file="$gvcf" '{d=length($3)-length($4); if(d<0)d=-d; if(d>cutoff) print file"\t"$1"\t"$2"\t"d}'
+  awk -v cutoff=$CUTOFF -v file="$gvcf" '{d=length($3)-length($4); if(d<0)d=-d; if(d>cutoff) print file"\t"$1"\t"$2"\t"d}'
 done | sort -k1,1 > super_indels.txt
 
 cut -f1 super_indels.txt | sort -u > need_filter.txt
@@ -87,12 +87,13 @@ for gvcf in $SRC/*.gvcf.gz; do
         echo "  before: $lines_before, after: $lines_after, removed: $((lines_before - lines_after))"
     else
         cp "$gvcf" .		
-		cp "$gvcf.tbi" .
+		    cp "$gvcf.tbi" .
+        echo "  no large indels found, file copied without changes."
     fi
 done
 
 cat super_indels.txt | wc -l | awk '{print "Total super large indels identified across all gVCFs: "$1}'
-cat needs_filter.txt | wc -l | awk '{print "Total gVCFs with super large indels removed: "$1}'
+cat need_filter.txt | wc -l | awk '{print "Total gVCFs with super large indels removed: "$1}'
 
 rm -f bad_sites.tmp need_filter.txt super_indels.txt
 echo "All done. Cleaned gVCFs are in" $(pwd)
