@@ -12,10 +12,9 @@ display_help() {
     echo "This script removes large indels for later parsing with GATK."
     echo ""
     echo "Options:"
-    echo "  -h, --help    Display this help message and exit"
-    echo "  -c  --cutoff          INDEL size to remove (default: $CUTOFF)"
-    echo "  -d  --directory          Source directory containing gVCF files (default: current directory"
-    # Add more options as needed
+    echo "  -h, --help       Display this help message and exit"
+    echo "  -c  --cutoff     INDEL size to remove (default: $CUTOFF)"
+    echo "  -d  --directory  Full path of the source directory containing gVCF files (default: current directory)
 }
 
 # Check if no arguments are provided
@@ -23,7 +22,6 @@ if [ "$#" -eq 0 ]; then
     display_help
     exit 1 # Exit with an error status
 fi
-
 
 #GET NEW VALUES FROM COMMAND LINE
 POSITIONAL_ARGS=()
