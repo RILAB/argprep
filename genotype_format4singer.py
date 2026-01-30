@@ -15,8 +15,6 @@ def open_maybe_gzip(filename, mode="rt"):
         return gzip.open(filename, mode)
     return open(filename, mode, encoding="utf-8")
 
-
-
 def vcf4singer(filename):
     """
            Convert the .clean file sample genotype field into 0 or 1
@@ -57,13 +55,6 @@ def vcf4singer(filename):
                                     allele = '1' if ref_read_depth == '0' else '0'
                         allele_str = allele_str + '\t' + allele
 
- #                       ref_read_depth = line[i].split(':')[1].split(',')[0]
- #                       if ref_read_depth == '0':
- #                           allele = '1'
- #                           allele_str = allele_str + '\t' + allele
- #                       else:
- #                           allele = "0"
- #                           allele_str = allele_str + '\t' + allele
                     newline = '\t'.join(line[:2])
 		            newline1 = '\t'.join(line[5:8]) + '\tGT'
                     #newline1 = '\t'.join(line[5:9])
