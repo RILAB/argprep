@@ -19,6 +19,10 @@ It expects a reference FASTA located in the same directory as the `.maf` files
 Submit with: `sbatch --array=0-<N-1> maf_to_gvcf.sh -m /path/to/maf_dir -d /path/to/out_dir`.
 Logs are written to `logs/` alongside the SLURM script.
 
+To merge per-sample gVCFs after filtering large indels, use `gatk_merge_gvcf.sh`.
+It runs `dropSV.py`, bgzip/tabix, and then GATK GenomicsDBImport + GenotypeGVCFs.
+Submit with: `sbatch gatk_merge_gvcf.sh -g /path/to/gvcf_dir -r /path/to/reference.fa [-l interval]`.
+
 Note: GATK can fail to merge gvcfs if your genomes have very large indels. In this case, please run `dropSV.py` first to remove large indels. Run `./dropSV.py -h` for options. This writes `cleangVCF/dropped_indels.bed` (full-span intervals).
 Example: `python3 dropSV.py -d /path/to/gvcfs -c 1000000`
 
