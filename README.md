@@ -8,17 +8,15 @@
 
 Align each assembly to the reference using [anchorwave](https://github.com/baoxingsong/AnchorWave). This step produces per-sample MAF files and should be done separately by chromosome.
 
-### 1B Convert to joint gvcf
-Individual `.maf` files need to be converted to `.gvcf` and then combined to a single `.gvcf`. 
-We recommend doing this separately by chromosome. 
-Instructions for these steps are [here](https://github.com/baoxingsong/AnchorWave/blob/master/doc/GATK.md).
-
-For this repo, use `maf_to_gvcf.sh` to run tassel on a directory of `.maf` files.
+### 1B Convert to gvcf
+Use `maf_to_gvcf.sh` to run tassel on a directory of `.maf` files.
 It expects a reference FASTA located in the same directory as the `.maf` files
 (either `reference.fa` or the only `.fa/.fasta` file in that directory).
-Submit with: `sbatch --array=0-<N-1> maf_to_gvcf.sh -m /path/to/maf_dir -d /path/to/out_dir` where `N` is the number of `.maf` files in the directory.
+Submit with: `sbatch --array=0-<N-1>%4 maf_to_gvcf.sh -m /path/to/maf_dir -d /path/to/out_dir` where `N` is the number of `.maf` files in the directory. The `%4` cap limits to 4 concurrent array tasks.
+You can also run `maf_to_gvcf.sh -m /path/to/maf_dir -d /path/to/out_dir` directly; it will auto-submit an array sized to the number of `.maf` files with the same 4-task cap.
 Logs are written to `logs/` alongside the SLURM script.
 
+### 1C Make joint gvcf
 To merge per-sample gVCFs after filtering large indels, use `gatk_merge_gvcf.sh`.
 It runs `dropSV.py`, bgzip/tabix, and then GATK GenomicsDBImport + GenotypeGVCFs.
 Submit with: `sbatch gatk_merge_gvcf.sh -g /path/to/gvcf_dir -r /path/to/reference.fa [-l interval]`.

@@ -58,6 +58,15 @@ if [ "${#MAF_FILES[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# If not running as a SLURM array task, submit ourselves with an array sized to the MAF count.
+if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
+  N="${#MAF_FILES[@]}"
+  ARRAY="0-$((N-1))%4"
+  echo "Submitting SLURM array with $N tasks (max 4 running at a time): $ARRAY"
+  sbatch --array="${ARRAY}" "$0" -m "$MAF_DIR" -d "$OUT_DIR"
+  exit 0
+fi
+
 MAF_FILE="${MAF_FILES[$SLURM_ARRAY_TASK_ID]}"
 BASE="$(basename "$MAF_FILE" .maf)"
 SAMPLE_NAME="${BASE}${SAMPLE_SUFFIX}"
