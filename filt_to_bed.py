@@ -240,7 +240,7 @@ def main() -> None:
     if os.path.isfile(filtered_gz):
         filtered_path = filtered_gz
     out_path = prefix + ".filtered.bed"
-    dropped_bed = prefix + ".dropped_indels.bed"
+    dropped_bed = os.path.join(os.path.dirname(prefix), "cleangVCF", "dropped_indels.bed")
     missing_bed = prefix + ".missing.bed"
 
     # Collect intervals by chromosome from the filtered VCF and mask BEDs.
@@ -253,7 +253,9 @@ def main() -> None:
         sys.stderr.write(f"ERROR: missing BED not found: '{missing_bed}'.\n")
         sys.exit(1)
     if not os.path.isfile(dropped_bed):
-        sys.stderr.write(f"ERROR: dropped indels BED not found: '{dropped_bed}'.\n")
+        sys.stderr.write(
+            f"ERROR: dropped indels BED not found: '{dropped_bed}'.\n"
+        )
         sys.exit(1)
 
     with open_maybe_gzip(filtered_path, "rt") as fin:

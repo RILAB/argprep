@@ -188,11 +188,9 @@ def main() -> None:
     # Process each gVCF: filter if needed, otherwise copy.
     for gvcf in gvcfs:
         base = gvcf.name
-        prefix = base.removesuffix(".gvcf.gz")
         print(f"Processing {base}")
         out_gvcf = out_dir / base
         out_tbi = out_dir / (base + ".tbi")
-        bed_path = out_dir / f"{prefix}.dropped_indels.bed"
 
         if str(gvcf) in need_filter:
             # Filter out large indel positions using bcftools -T ^bad_sites.
@@ -234,23 +232,12 @@ def main() -> None:
                 f"removed: {lines_before - lines_after}"
             )
 
-            # Write per-gVCF dropped-indel BED for downstream masking.
-            per_intervals: dict[str, List[Tuple[int, int]]] = {}
-            for row in super_indels:
-                if row[0] != str(gvcf):
-                    continue
-                chrom, pos, ref_len, alt_len = row[1], row[2], row[4], row[5]
-                start = pos - 1
-                end = start + ref_len if ref_len > alt_len else pos
-                per_intervals.setdefault(chrom, []).append((start, end))
-            write_bed(bed_path, per_intervals)
         else:
             # No large indels: copy input and emit an empty BED.
             shutil.copy2(gvcf, out_gvcf)
             if gvcf.with_suffix(gvcf.suffix + ".tbi").exists():
                 shutil.copy2(gvcf.with_suffix(gvcf.suffix + ".tbi"), out_tbi)
             print("  no large indels found, file copied without changes.")
-            bed_path.write_text("")
 
     print(
         f"Total super large indels identified across all gVCFs: {len(super_indels)}"
