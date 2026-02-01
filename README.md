@@ -44,8 +44,7 @@ This script writes three files, `.inv`, `.filtered`, and `.clean`. Each includes
 It also writes a `.missing.bed` file (no header) listing bp positions absent from the input VCF (i.e., not covered by invariant END ranges, indel spans, or variable sites), in BED 0-based half-open format.
 File outputs will be large when unzipped, it is recommended to run with `--gzip-output` to automatically zip output files.
 Writes to stderr log of how many bp (expanding `END` segments) were written to each file.
-Your gvcf **must** have invariant sites. If there are no invariant sites, go back to [step 2](https://github.com/rossibarra/jri_arg/blob/main/README.md#2-GVCF-parsing
-).
+Your gvcf **must** have invariant sites. If there are no invariant sites, go back to [step 2](https://github.com/rossibarra/jri-arg/blob/main/README.md#2-gvcf-parsing).
 
 ##### `.inv` 
 Contains lines from vcf where:
