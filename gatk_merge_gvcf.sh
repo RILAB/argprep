@@ -121,26 +121,103 @@ if [ "${#GVCF_FILES[@]}" -eq 0 ]; then
   exit 1
 fi
 
-WORKSPACE="genomicsdb_workspace"
-OUT_GVCF="${PWD}/combined.gvcf.gz"
-
-GVCF_ARGS=()
-for f in "${GVCF_FILES[@]}"; do
-  GVCF_ARGS+=( -V "$f" )
-done
-
-IMPORT_CMD=(gatk --java-options "-Xmx100g -Xms100g" GenomicsDBImport "${GVCF_ARGS[@]}" \
-  --genomicsdb-workspace-path "$WORKSPACE")
-GENO_CMD=(gatk --java-options "-Xmx100g -Xms100g" GenotypeGVCFs \
-  -R "$REF_FASTA" -V "gendb://${WORKSPACE}" -O "$OUT_GVCF")
-
+# If an interval is provided (e.g., chr1 or chr1:1-1000), only process that contig.
+INTERVAL_CONTIG=""
 if [ -n "$INTERVAL" ]; then
-  IMPORT_CMD+=( -L "$INTERVAL" )
-  GENO_CMD+=( -L "$INTERVAL" )
+  INTERVAL_CONTIG="${INTERVAL%%:*}"
 fi
 
-# Build GenomicsDB and emit merged gVCF in the current directory.
-"${IMPORT_CMD[@]}"
-"${GENO_CMD[@]}"
+SPLIT_DIR="${CLEAN_DIR%/}/split_gvcf"
+mkdir -p "$SPLIT_DIR"
 
-echo "Combined gVCF written to $OUT_GVCF"
+declare -A CONTIG_SET=()
+
+for f in "${GVCF_FILES[@]}"; do
+  mapfile -t CONTIGS < <(tabix -l "$f")
+  if [ "${#CONTIGS[@]}" -eq 0 ]; then
+    echo "ERROR: no contigs found in $f (missing or corrupt index?)"
+    exit 1
+  fi
+
+  if [ -n "$INTERVAL_CONTIG" ]; then
+    WANT_CONTIGS=()
+    for c in "${CONTIGS[@]}"; do
+      if [ "$c" = "$INTERVAL_CONTIG" ]; then
+        WANT_CONTIGS+=("$c")
+        break
+      fi
+    done
+  else
+    WANT_CONTIGS=("${CONTIGS[@]}")
+  fi
+
+  if [ "${#WANT_CONTIGS[@]}" -eq 0 ]; then
+    continue
+  fi
+
+  base="$(basename "$f" .gvcf.gz)"
+  if [ "${#CONTIGS[@]}" -eq 1 ]; then
+    contig="${CONTIGS[0]}"
+    if [ -n "$INTERVAL_CONTIG" ] && [ "$contig" != "$INTERVAL_CONTIG" ]; then
+      continue
+    fi
+    ln -sf "$f" "$SPLIT_DIR/${base}.${contig}.gvcf.gz"
+    ln -sf "${f}.tbi" "$SPLIT_DIR/${base}.${contig}.gvcf.gz.tbi"
+    CONTIG_SET["$contig"]=1
+    continue
+  fi
+
+  for contig in "${WANT_CONTIGS[@]}"; do
+    out="${SPLIT_DIR}/${base}.${contig}.gvcf.gz"
+    if [ ! -f "$out" ]; then
+      gatk --java-options "-Xmx100g -Xms100g" SelectVariants \
+        -R "$REF_FASTA" -V "$f" -L "$contig" -O "$out"
+      tabix -p vcf "$out"
+    fi
+    CONTIG_SET["$contig"]=1
+  done
+done
+
+if [ "${#CONTIG_SET[@]}" -eq 0 ]; then
+  echo "ERROR: no contigs to process after splitting."
+  exit 1
+fi
+
+for contig in "${!CONTIG_SET[@]}"; do
+  mapfile -t CONTIG_FILES < <(find "$SPLIT_DIR" -maxdepth 1 -type f -name "*.${contig}.gvcf.gz" | sort)
+  if [ "${#CONTIG_FILES[@]}" -eq 0 ]; then
+    continue
+  fi
+
+  GVCF_ARGS=()
+  for f in "${CONTIG_FILES[@]}"; do
+    GVCF_ARGS+=( -V "$f" )
+  done
+
+  WORKSPACE="genomicsdb_workspace_${contig}"
+  OUT_GVCF="${PWD}/combined.${contig}.gvcf.gz"
+
+  if [ -d "$WORKSPACE" ]; then
+    echo "ERROR: $WORKSPACE already exists; remove it before re-running."
+    exit 1
+  fi
+
+  IMPORT_CMD=(gatk --java-options "-Xmx100g -Xms100g" GenomicsDBImport "${GVCF_ARGS[@]}" \
+    --genomicsdb-workspace-path "$WORKSPACE")
+  GENO_CMD=(gatk --java-options "-Xmx100g -Xms100g" GenotypeGVCFs \
+    -R "$REF_FASTA" -V "gendb://${WORKSPACE}" -O "$OUT_GVCF")
+
+  if [ -n "$INTERVAL" ]; then
+    IMPORT_CMD+=( -L "$INTERVAL" )
+    GENO_CMD+=( -L "$INTERVAL" )
+  else
+    IMPORT_CMD+=( -L "$contig" )
+    GENO_CMD+=( -L "$contig" )
+  fi
+
+  # Build GenomicsDB and emit merged gVCF for this contig.
+  "${IMPORT_CMD[@]}"
+  "${GENO_CMD[@]}"
+
+  echo "Combined gVCF written to $OUT_GVCF"
+done
