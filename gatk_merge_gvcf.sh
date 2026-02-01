@@ -34,9 +34,9 @@ module load tabix || { echo "ERROR: failed to load tabix module"; exit 1; }
 module load gatk || { echo "ERROR: failed to load gatk module"; exit 1; }
 
 echo "Tool versions:"
-picard --version || true
-tabix --version || true
-gatk --version || true
+picard MarkDuplicates --version 2>&1 | head -n 1 || true
+tabix 2>&1 | head -n 3 | tail -1 || true
+gatk --version 2>&1 | head -n 1 || true
 
 # Parse inputs for gVCF dir, reference, optional interval, optional cutoff.
 GVCF_DIR=""
@@ -136,7 +136,10 @@ mkdir -p "$SPLIT_DIR"
 declare -A CONTIG_SET=()
 
 for f in "${GVCF_FILES[@]}"; do
-  mapfile -t CONTIGS < <(tabix -l "$f")
+  CONTIGS=()
+  while IFS= read -r line; do
+    CONTIGS+=("$line")
+  done < <(tabix -l "$f")
   if [ "${#CONTIGS[@]}" -eq 0 ]; then
     echo "ERROR: no contigs found in $f (missing or corrupt index?)"
     exit 1
@@ -187,7 +190,10 @@ if [ "${#CONTIG_SET[@]}" -eq 0 ]; then
 fi
 
 for contig in "${!CONTIG_SET[@]}"; do
-  mapfile -t CONTIG_FILES < <(find "$SPLIT_DIR" -maxdepth 1 -type f -name "*.${contig}.gvcf.gz" | sort)
+  CONTIG_FILES=()
+  while IFS= read -r line; do
+    CONTIG_FILES+=("$line")
+  done < <(find "$SPLIT_DIR" -maxdepth 1 -type f -name "*.${contig}.gvcf.gz" | sort)
   if [ "${#CONTIG_FILES[@]}" -eq 0 ]; then
     continue
   fi
