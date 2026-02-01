@@ -21,6 +21,14 @@ usage() {
 LOG_DIR="${SLURM_SUBMIT_DIR:-.}/logs"
 mkdir -p "$LOG_DIR"
 
+for init in /etc/profile.d/modules.sh /usr/share/Modules/init/bash /etc/profile; do
+  if [ -f "$init" ]; then
+    # shellcheck source=/dev/null
+    source "$init"
+    break
+  fi
+done
+
 module load picard || { echo "ERROR: failed to load picard module"; exit 1; }
 module load tabix || { echo "ERROR: failed to load tabix module"; exit 1; }
 module load gatk || { echo "ERROR: failed to load gatk module"; exit 1; }
