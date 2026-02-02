@@ -26,6 +26,8 @@ import getpass
 import gzip
 import os
 import platform
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -46,7 +48,7 @@ def build_provenance_headers(
     out_filt: str,
     out_clean: str,
     depth: int,
-    gzip_output: bool,
+    bgzip_output: bool,
 ) -> list[str]:
     """
     Build extra VCF header lines describing how the outputs were produced.
@@ -70,7 +72,7 @@ def build_provenance_headers(
         f"##output.filtered={out_filt}",
         f"##output.clean={out_clean}",
         f"##parameters.depth_threshold={depth}",
-        f"##parameters.gzip_output={'true' if gzip_output else 'false'}",
+        f"##parameters.bgzip_output={'true' if bgzip_output else 'false'}",
     ]
     lines.append(
         "##notes=Records with valid INFO/END are expanded across POS..END and routed to .inv; other filters apply as documented."
@@ -100,6 +102,11 @@ def open_maybe_gzip(path: str, mode: str) -> TextIO:
     if path.endswith(".gz"):
         return gzip.open(path, mode)  # type: ignore
     return open(path, mode, encoding="utf-8")
+
+
+def require_tool(tool: str) -> None:
+    if shutil.which(tool) is None:
+        sys.exit(f"ERROR: required tool not found in PATH: {tool}")
 
 
 def load_fai_lengths(path: str) -> dict[str, int]:
@@ -283,9 +290,9 @@ def main() -> None:
         help="Output prefix (default: input filename without .vcf/.vcf.gz)"
     )
     ap.add_argument(
-        "--gzip-output",
+        "--bgzip-output",
         action="store_true",
-        help="Gzip all output files (.gz)"
+        help="Bgzip all output files (.gz)"
     )
     ap.add_argument(
         "--fai",
@@ -315,18 +322,21 @@ def main() -> None:
     out_filt = prefix + ".filtered"
     out_clean = prefix + ".clean"
     out_missing = prefix + ".missing.bed"
+    bgzip_output = args.bgzip_output
+
+    out_inv_final = out_inv + (".gz" if bgzip_output else "")
+    out_filt_final = out_filt + (".gz" if bgzip_output else "")
+    out_clean_final = out_clean + (".gz" if bgzip_output else "")
+    out_missing_final = out_missing + (".gz" if bgzip_output else "")
 
     # ---------------- Open files ----------------
-    def open_out(path, gzip_output):
-        if gzip_output:
-            return gzip.open(path + ".gz", "wt")
-        return open(path, "wt", encoding="utf-8")
+    if bgzip_output:
+        require_tool("bgzip")
 
-    
     with open_maybe_gzip(in_path, "rt") as fin, \
-         open_out(out_inv, args.gzip_output) as f_inv, \
-         open_out(out_filt, args.gzip_output) as f_filt, \
-         open_out(out_clean, args.gzip_output) as f_clean, \
+         open(out_inv, "wt", encoding="utf-8") as f_inv, \
+         open(out_filt, "wt", encoding="utf-8") as f_filt, \
+         open(out_clean, "wt", encoding="utf-8") as f_clean, \
          open(out_missing, "wt", encoding="utf-8") as f_missing:
     
         # Buffer header lines so we can inject provenance right before #CHROM.
@@ -336,11 +346,11 @@ def main() -> None:
         # Prebuild provenance lines (inserted before #CHROM).
         prov_lines = build_provenance_headers(
             in_path=in_path,
-            out_inv=out_inv + (".gz" if args.gzip_output else ""),
-            out_filt=out_filt + (".gz" if args.gzip_output else ""),
-            out_clean=out_clean + (".gz" if args.gzip_output else ""),
+            out_inv=out_inv_final,
+            out_filt=out_filt_final,
+            out_clean=out_clean_final,
             depth=depth,
-            gzip_output=args.gzip_output,
+            bgzip_output=bgzip_output,
         )
     
         record_count = 0
@@ -559,6 +569,12 @@ def main() -> None:
                 missing_bp += (chrom_len - last_end)
 
         print(f"  missing:  {missing_bp:,}",file=sys.stderr)
+
+    if bgzip_output:
+        for path in (out_inv, out_filt, out_clean, out_missing):
+            proc = subprocess.run(["bgzip", "-f", path], check=False)
+            if proc.returncode != 0:
+                sys.exit(f"ERROR: bgzip failed for {path}")
     
 if __name__ == "__main__":
     main()

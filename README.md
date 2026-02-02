@@ -74,12 +74,13 @@ By default the workflow uses these locations (override in `config.yaml`):
 - `results/split/combined.<contig>.missing.bed` : missing positions
 - `results/split/combined.<contig>.filtered.bed` : merged mask bed
 - `results/summary.md` : markdown summary of jobs run, outputs created, and warnings
-  - If `gzip_output: true`, the `.inv`, `.filtered`, `.clean`, and `.missing.bed` files will have a `.gz` suffix.
+  - If `bgzip_output: true`, the `.inv`, `.filtered`, `.clean`, and `.missing.bed` files will have a `.gz` suffix.
+  - All gzipped outputs in this pipeline use bgzip (required for `tabix`).
 
 ## Notes
 
 - `scripts/dropSV.py` removes indels larger than `drop_cutoff` (if set in `config.yaml`).
-- `scripts/split.py` supports `--filter-multiallelic` and `--gzip-output` (toggle via `config.yaml`).
+- `scripts/split.py` supports `--filter-multiallelic` and `--bgzip-output` (toggle via `config.yaml`).
 - `scripts/filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
 
 ## Downstream ARG estimation

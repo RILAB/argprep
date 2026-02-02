@@ -22,7 +22,7 @@ SAMPLE_SUFFIX = config.get("sample_suffix", "_anchorwave")
 FILL_GAPS = str(config.get("fill_gaps", "false")).lower()
 DROP_CUTOFF = config.get("drop_cutoff", "")
 FILTER_MULTIALLELIC = bool(config.get("filter_multiallelic", False))
-GZIP_OUTPUT = bool(config.get("gzip_output", False))
+BGZIP_OUTPUT = bool(config.get("bgzip_output", False))
 NO_MERGE = bool(config.get("no_merge", False))
 
 REF_BASE = ORIG_REF_FASTA.name
@@ -196,7 +196,7 @@ def _split_prefix(contig):
     return RESULTS_DIR / "split" / f"combined.{contig}"
 
 
-SPLIT_SUFFIX = ".gz" if GZIP_OUTPUT else ""
+SPLIT_SUFFIX = ".gz" if BGZIP_OUTPUT else ""
 
 rule all:
     # Final targets: merged gVCFs plus filtered bed masks per contig.
@@ -355,14 +355,20 @@ rule maf_to_gvcf:
           -gvcfOutput "$out_base" \
           -fillGaps "{params.fill_gaps}" \
           > "{log}" 2>&1
-        if [ ! -f "{output.gvcf}" ]; then
-          echo "ERROR: TASSEL did not write {output.gvcf}" >&2
+        if [ -f "$out_base" ]; then
+          bgzip -f -c "$out_base" > "{output.gvcf}"
+          rm -f "$out_base"
+        elif [ -f "{output.gvcf}" ]; then
+          if ! tabix -p vcf "{output.gvcf}" >/dev/null 2>&1; then
+            gunzip -c "{output.gvcf}" | bgzip -c > "{output.gvcf}.tmp"
+            mv "{output.gvcf}.tmp" "{output.gvcf}"
+          fi
+        else
+          echo "ERROR: TASSEL did not write $out_base or {output.gvcf}" >&2
           tail -n 200 "{log}" >&2 || true
           exit 1
         fi
-        if [ ! -f "{output.tbi}" ]; then
-          tabix -p vcf "{output.gvcf}"
-        fi
+        tabix -f -p vcf "{output.gvcf}"
         """
 
 
@@ -403,11 +409,14 @@ rule split_gvcf_by_contig:
         """
         set -euo pipefail
         mkdir -p "{GVCF_DIR}/cleangVCF/split_gvcf"
+        tmp_vcf="{output.gvcf}.tmp.vcf"
         gatk --java-options "-Xmx100g -Xms100g" SelectVariants \
           -R "{input.ref}" \
           -V "{input.gvcf}" \
           -L "{wildcards.contig}" \
-          -O "{output.gvcf}"
+          -O "$tmp_vcf"
+        bgzip -f -c "$tmp_vcf" > "{output.gvcf}"
+        rm -f "$tmp_vcf"
         tabix -f -p vcf "{output.gvcf}"
         """
 
@@ -456,7 +465,7 @@ rule split_gvcf:
     params:
         depth=DEPTH,
         filter_multiallelic=FILTER_MULTIALLELIC,
-        gzip_output=GZIP_OUTPUT,
+        bgzip_output=BGZIP_OUTPUT,
         out_prefix=lambda wc: str(_split_prefix(wc.contig)),
     shell:
         """
@@ -466,8 +475,8 @@ rule split_gvcf:
         if [ "{params.filter_multiallelic}" = "True" ]; then
           cmd+=(--filter-multiallelic)
         fi
-        if [ "{params.gzip_output}" = "True" ]; then
-          cmd+=(--gzip-output)
+        if [ "{params.bgzip_output}" = "True" ]; then
+          cmd+=(--bgzip-output)
         fi
         cmd+=("{input.gvcf}")
         "${{cmd[@]}}"

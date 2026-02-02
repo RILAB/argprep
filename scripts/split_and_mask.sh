@@ -72,7 +72,7 @@ if [ "$FILTER_MULTIALLELIC" = "true" ]; then
   SPLIT_ARGS+=(--filter-multiallelic)
 fi
 if [ "$NO_GZIP" != "true" ]; then
-  SPLIT_ARGS+=(--gzip-output)
+  SPLIT_ARGS+=(--bgzip-output)
 fi
 SPLIT_ARGS+=("$INPUT_VCF")
 

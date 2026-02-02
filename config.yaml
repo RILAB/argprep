@@ -34,7 +34,7 @@ contigs:
 
 # Optional: split.py / filt_to_bed.py switches
 filter_multiallelic: false
-gzip_output: false
+bgzip_output: false
 no_merge: false
 
 # Default SLURM resources (used by the provided profile)
