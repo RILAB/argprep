@@ -1,0 +1,6 @@
+[submodule "tassel-5-standalone"]
+	path = tassel-5-standalone
+	url = https://bitbucket.org/tasseladmin/tassel-5-standalone.git
+[submodule "singer-snakemake"]
+	path = singer-snakemake
+	url = https://github.com/nspope/singer-snakemake

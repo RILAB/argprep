@@ -1,0 +1,17 @@
+# Snakemake profile for SLURM (Snakemake >=8).
+# Edit this file to customize sbatch options for your cluster.
+
+executor: cluster-generic
+cluster-generic-submit-cmd: "sbatch --account {config[slurm_account]} --partition {config[slurm_partition]} --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.time}"
+
+jobs: 200
+cores: 2
+use-conda: true
+rerun-incomplete: true
+latency-wait: 60
+
+# Default resources for rules that don't define them explicitly.
+# Override per-rule by adding resources in the Snakefile.
+default-resources:
+  - mem_mb=48000
+  - time="48:00:00"

@@ -1,0 +1,6 @@
+@HD	VN:1.6
+@SQ	SN:1	LN:10000000	M5:dce45a8d844181ff01f8fd79e1319490	UR:file:///Users/jeffreyross-ibarra/src/jri-arg/example_data/ref.fa
+@SQ	SN:2	LN:10000000	M5:2aa0c55fb339091110d41018a0e999ad	UR:file:///Users/jeffreyross-ibarra/src/jri-arg/example_data/ref.fa
+@SQ	SN:3	LN:10000000	M5:9f252e7ba64632e6410d7db36a95abf1	UR:file:///Users/jeffreyross-ibarra/src/jri-arg/example_data/ref.fa
+@SQ	SN:4	LN:10000000	M5:d68fcbc2c16ea4fc064f37810d9f7170	UR:file:///Users/jeffreyross-ibarra/src/jri-arg/example_data/ref.fa
+@SQ	SN:5	LN:10000000	M5:be9e6dcb6d942de7d91d2b32558ddd04	UR:file:///Users/jeffreyross-ibarra/src/jri-arg/example_data/ref.fa

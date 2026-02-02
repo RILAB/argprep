@@ -1,0 +1,45 @@
+# Paths
+maf_dir: example_data
+reference_fasta: example_data/ref.fa
+
+# Output locations
+gvcf_dir: gvcf
+results_dir: results
+
+# Tools
+# tassel_dir defaults to "tassel-5-standalone" if omitted
+# tassel_dir: /path/to/tassel-5-standalone
+
+# Parameters
+sample_suffix: _anchorwave
+fill_gaps: false
+
+# Optional for split.py
+# depth cutoff used to classify sites (defaults to number of MAF files)
+# Example: 10
+depth: null
+
+# Optional: list of contigs to process
+# If omitted, the workflow expects reference_fasta.fai to exist.
+contigs:
+  - 1
+
+# Optional: override gVCF sample list (default is all *.maf in maf_dir)
+# samples:
+#   - sampleA
+#   - sampleB
+
+# Optional: dropSV.py cutoff for large indels
+# drop_cutoff: 9101264
+
+# Optional: split.py / filt_to_bed.py switches
+filter_multiallelic: false
+gzip_output: false
+no_merge: false
+
+# Default SLURM resources (used by the provided profile)
+default_threads: 2
+default_mem_mb: 48000
+default_time: "48:00:00"
+slurm_account: jrigrp
+slurm_partition: high
