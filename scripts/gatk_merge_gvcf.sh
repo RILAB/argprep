@@ -52,10 +52,11 @@ fi
 
 # Prefer the submit directory so we can find repo files even when SLURM runs from a spool dir.
 if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
-  SCRIPT_DIR="$SLURM_SUBMIT_DIR"
+  REPO_ROOT="$SLURM_SUBMIT_DIR"
 else
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fi
+SCRIPT_DIR="$REPO_ROOT/scripts"
 DROP_SV="${SCRIPT_DIR}/dropSV.py"
 
 if [ ! -x "$DROP_SV" ]; then

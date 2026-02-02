@@ -46,10 +46,11 @@ mkdir -p "$LOG_DIR"
 
 # Resolve script directory so we can find helper scripts when SLURM runs from a spool dir.
 if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
-  SCRIPT_DIR="$SLURM_SUBMIT_DIR"
+  REPO_ROOT="$SLURM_SUBMIT_DIR"
 else
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fi
+SCRIPT_DIR="$REPO_ROOT/scripts"
 
 # Find input VCF/gVCF from prefix.
 INPUT_VCF=""

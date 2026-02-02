@@ -34,9 +34,20 @@ Edit `config.yaml` to point at your MAF directory and reference FASTA. At minimu
 
 If your reference FASTA does **not** have an index (`.fai`), either create one (`samtools faidx`) or set `contigs:` explicitly in `config.yaml`.
 
-## Run
+## Run 
 
-From the repo root:
+The pipeline can be run one of two ways, both from the repo root:
+
+### On Slurm 
+
+A default SLURM profile is provided under `profiles/slurm/`. Edit `profiles/slurm/config.yaml` to customize sbatch options if needed.
+Defaults for account/partition and baseline resources are set in `config.yaml` (`slurm_account`, `slurm_partition`, `default_*`).
+
+```bash
+snakemake --profile profiles/slurm
+```
+
+### Locally
 
 ```bash
 snakemake -j 8 
@@ -48,21 +59,12 @@ Common options:
 - `--rerun-incomplete`: clean up partial outputs
 - `--printshellcmds`: show executed commands
 
-### Run on SLURM
-
-A default SLURM profile is provided under `profiles/slurm/`. Edit `profiles/slurm/config.yaml` to customize sbatch options if needed.
-Defaults for account/partition and baseline resources are set in `config.yaml` (`slurm_account`, `slurm_partition`, `default_*`).
-
-```bash
-snakemake --profile profiles/slurm
-```
-
 ## Workflow Outputs
 
 By default the workflow uses these locations (override in `config.yaml`):
 
 - `gvcf/` : TASSEL gVCFs (`*.gvcf.gz`) from MAFs
-- `gvcf/cleangVCF/` : cleaned gVCFs from `dropSV.py`
+- `gvcf/cleangVCF/` : cleaned gVCFs from `scripts/dropSV.py`
 - `gvcf/cleangVCF/dropped_indels.bed` : bedfile of large indels
 - `gvcf/cleangVCF/split_gvcf/` : per-contig gVCFs for merging
 - `results/combined/combined.<contig>.gvcf.gz` : merged gVCF per contig
@@ -76,9 +78,9 @@ By default the workflow uses these locations (override in `config.yaml`):
 
 ## Notes
 
-- `dropSV.py` removes indels larger than `drop_cutoff` (if set in `config.yaml`).
-- `split.py` supports `--filter-multiallelic` and `--gzip-output` (toggle via `config.yaml`).
-- `filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
+- `scripts/dropSV.py` removes indels larger than `drop_cutoff` (if set in `config.yaml`).
+- `scripts/split.py` supports `--filter-multiallelic` and `--gzip-output` (toggle via `config.yaml`).
+- `scripts/filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
 
 ## Downstream ARG estimation
 

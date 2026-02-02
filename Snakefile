@@ -346,9 +346,9 @@ rule drop_sv:
         """
         set -euo pipefail
         if [ -n "{params.cutoff}" ]; then
-          python3 "{workflow.basedir}/dropSV.py" -d "{GVCF_DIR}" -c "{params.cutoff}"
+          python3 "{workflow.basedir}/scripts/dropSV.py" -d "{GVCF_DIR}" -c "{params.cutoff}"
         else
-          python3 "{workflow.basedir}/dropSV.py" -d "{GVCF_DIR}"
+          python3 "{workflow.basedir}/scripts/dropSV.py" -d "{GVCF_DIR}"
         fi
         """
 
@@ -427,7 +427,7 @@ rule split_gvcf:
         """
         set -euo pipefail
         mkdir -p "{RESULTS_DIR}/split"
-        cmd=(python3 "{workflow.basedir}/split.py" --depth="{params.depth}" --out-prefix "{params.out_prefix}" --fai "{input.ref_fai}")
+        cmd=(python3 "{workflow.basedir}/scripts/split.py" --depth="{params.depth}" --out-prefix "{params.out_prefix}" --fai "{input.ref_fai}")
         if [ "{params.filter_multiallelic}" = "True" ]; then
           cmd+=(--filter-multiallelic)
         fi
@@ -453,7 +453,7 @@ rule mask_bed:
     shell:
         """
         set -euo pipefail
-        cmd=(python3 "{workflow.basedir}/filt_to_bed.py" "{params.prefix}")
+        cmd=(python3 "{workflow.basedir}/scripts/filt_to_bed.py" "{params.prefix}")
         cmd+=(--dropped-bed "{input.dropped}")
         if [ "{params.no_merge}" = "True" ]; then
           cmd+=(--no-merge)

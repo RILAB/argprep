@@ -36,7 +36,7 @@ fi
 if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
   REPO_ROOT="$SLURM_SUBMIT_DIR"
 else
-  REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fi
 
 TASSEL_DIR="$REPO_ROOT/tassel-5-standalone"

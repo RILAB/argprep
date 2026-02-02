@@ -1,6 +1,6 @@
 # Paths
-maf_dir: testing
-reference_fasta: testing/ref.fa
+maf_dir: example_data
+reference_fasta: example_data/ref.fa
 
 # Output locations
 gvcf_dir: gvcf
