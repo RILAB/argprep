@@ -14,10 +14,10 @@ results_dir: results
 sample_suffix: _anchorwave
 fill_gaps: false
 
-# Required for split.py
-# depth cutoff used to classify sites
+# Optional for split.py
+# depth cutoff used to classify sites (defaults to number of MAF files)
 # Example: 10
-depth: 3
+depth: null
 
 # Optional: list of contigs to process
 # If omitted, the workflow expects reference_fasta.fai to exist.

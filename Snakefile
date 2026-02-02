@@ -18,7 +18,6 @@ TASSEL_DIR = Path(config.get("tassel_dir", "tassel-5-standalone")).resolve()
 
 SAMPLE_SUFFIX = config.get("sample_suffix", "_anchorwave")
 FILL_GAPS = str(config.get("fill_gaps", "false")).lower()
-DEPTH = int(config["depth"])
 DROP_CUTOFF = config.get("drop_cutoff", "")
 FILTER_MULTIALLELIC = bool(config.get("filter_multiallelic", False))
 GZIP_OUTPUT = bool(config.get("gzip_output", False))
@@ -61,6 +60,16 @@ SAMPLES = _discover_samples()
 CONTIGS = _read_contigs()
 
 GVCF_BASES = [f"{sample}To{REF_BASE}" for sample in SAMPLES]
+
+
+def _default_depth():
+    depth_cfg = config.get("depth", None)
+    if depth_cfg is None or str(depth_cfg).strip() == "":
+        return max(1, len(SAMPLES))
+    return int(depth_cfg)
+
+
+DEPTH = _default_depth()
 
 
 def _gvcf_out(base):

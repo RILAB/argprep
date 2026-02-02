@@ -204,6 +204,7 @@ def format_for_singer(cols: list[str]) -> str:
         ad_idx = None
 
     allele_str = ""
+    non_missing = 0
     for sample in cols[9:]:
         allele = "."
         if sample not in (".", "./.", ".|."):
@@ -213,14 +214,34 @@ def format_for_singer(cols: list[str]) -> str:
                 ref_read_depth = ad_field.split(",")[0] if ad_field not in (".", "") else "."
                 if ref_read_depth != ".":
                     allele = "1" if ref_read_depth == "0" else "0"
+        if allele != ".":
+            non_missing += 1
         allele_str += "\t" + allele
 
     chrom, pos = cols[0], cols[1]
     id_field = f"snp_{chrom}_{pos}"
     alt = cols[4].replace(",<NON_REF>", "")
     core = "\t".join([chrom, pos, id_field, cols[3], alt])
-    info = "\t".join(cols[5:8]) + "\tGT"
+    info = "\t".join([cols[5], cols[6], _update_info_dp(cols[7], non_missing)]) + "\tGT"
     return f"{core}\t{info}{allele_str}\n"
+
+
+def _update_info_dp(info: str, dp: int) -> str:
+    """
+    Replace or append INFO DP with the provided depth.
+    """
+    if info == "." or info == "":
+        return f"DP={dp}"
+    parts = info.split(";")
+    updated = False
+    for i, part in enumerate(parts):
+        if part.startswith("DP="):
+            parts[i] = f"DP={dp}"
+            updated = True
+            break
+    if not updated:
+        parts.append(f"DP={dp}")
+    return ";".join(parts)
 # ------------------------------------------------------------
 # Main driver
 # ------------------------------------------------------------
