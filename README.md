@@ -86,6 +86,6 @@ By default the workflow uses these locations (override in `config.yaml`):
 
 Use Nate Pope's Snakemake pipeline:
 
-- `singer-snakemake` (included as a submodule)
+- SINGER Snakemake workflow: `https://github.com/nspope/singer-snakemake`
 
 For SINGER, use `combined.<contig>.clean` and `combined.<contig>.filtered.bed` as inputs.
