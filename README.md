@@ -20,8 +20,8 @@ Create and activate the environment:
 
 ```bash
 module load conda
-conda env create -f argtools.yml
-conda activate argtools
+conda env create -f argprep.yml
+conda activate argprep
 ```
 
 ## Configure

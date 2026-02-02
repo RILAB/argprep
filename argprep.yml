@@ -1,0 +1,12 @@
+name: argprep
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - htslib
+  - samtools
+  - bcftools
+  - gatk4
+  - picard
+  - python=3.9.23

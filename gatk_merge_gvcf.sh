@@ -22,7 +22,7 @@ LOG_DIR="${SLURM_SUBMIT_DIR:-.}/logs"
 mkdir -p "$LOG_DIR"
 
 module load conda || { echo "ERROR: failed to load conda module"; exit 1; }
-conda activate argtools || { echo "ERROR: failed to activate conda env: argtools"; exit 1; }
+conda activate argprep || { echo "ERROR: failed to activate conda env: argprep"; exit 1; }
 
 
 echo "Tool versions:"
