@@ -36,7 +36,7 @@ If your reference FASTA does **not** have an index (`.fai`), either create one (
 
 ## Run 
 
-The pipeline can be run one of two ways, both from the repo root. It is recommended you first run on the example data provided to ensure the pipeline works on your system.
+The pipeline can be run one of two ways, both from the repo root. **It is recommended you first run on the example data provided to ensure the pipeline works on your system.**
 
 ### On Slurm 
 
