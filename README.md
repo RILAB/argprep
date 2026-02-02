@@ -1,91 +1,88 @@
-# ARG Pipeline (Snakemake)
+## Workflow Overview
 
-This repository provides a Snakemake workflow that converts AnchorWave MAFs into per-contig merged gVCFs, splits them into clean/filtered/invariant sets, and produces mask bedfiles for downstream ARG inference.
+<img src="https://github.com/RILAB/arg-ne/blob/jri_test/pipeline_flow.png" alt="drawing" width="500"/>
 
-## Requirements
+## 1 Assemble a gvcf
 
-- Conda (you may need to `module load conda` on your cluster)
-- TASSEL (provided via the `tassel-5-standalone` submodule)
-- GATK, Picard, htslib (installed in the conda env defined below)
+### 1A Align genomes to reference
 
-## Setup
+Align each assembly to the reference using [anchorwave](https://github.com/baoxingsong/AnchorWave).
 
-Clone with submodules so TASSEL is available:
+### 1B Convert to joint gvcf
+Individual `.maf` files need to be converted to `.gvcf` and then combined to a single `.gvcf`. 
+We recommend doing this separately by chromosome. 
+Instructions for these steps are [here](https://github.com/baoxingsong/AnchorWave/blob/master/doc/GATK.md).
 
-```bash
-git clone --recurse-submodules <repo>
-```
+Note: GATK can fail to merge gvcfs if your genomes have very large indels. In this case, please run `dropSV.sh` first to remove large indels. Run `./dropSV.sh -h` for options.
 
-Create and activate the environment (do this before running Snakemake):
+## 2 GVCF parsing
+### 2A Clean gvcf 
+We assume your gvcf is formatted like the [example file](https://github.com/RILAB/arg-ne/blob/main/test.vcf.gz) and is for a single chromosome. 
+Please split any multi-chromosome gvcfs into individual chromosomes before continuing.
+The script can read both gzipped and unzipped vcfs. 
 
-```bash
-module load conda
-conda env create -f argprep.yml
-conda activate argprep
-```
+Run `split.py` using `python3 split.py --depth=<depth> <filename.vcf>`. 
+Normally you will want to set depth equal to your sample size. 
+In some files, for example, depth is recorded as 30 for each individual, so you should set depth to 30 x sample size.
+In addition, if you run the script with `--filter-multiallelic`, this will send multi-allelic sites to the `.filtered` file described below. 
 
-## Configure
+This script writes three files, `.inv`, `.filtered`, and `.clean`. Each includes the regular header.
+File outputs will be large when unzipped, it is recommended to run with `--gzip-output` to automatically zip output files.
+Writes to stderr log of how many bp (expanding `END` segments) were written to each file.
+Your gvcf **must** have invariant sites. If there are no invariant sites, go back to [step 2](https://github.com/RILAB/arg-ne/blob/main/README.md#2-gvcf-parsing
+).
 
-Edit `config.yaml` to point at your MAF directory and reference FASTA. At minimum you must set:
+##### `.inv` 
+Contains lines from vcf where:
+- `INFO` is `.`
+-  `INFO` contains `END=`
 
-- `maf_dir`: directory containing `*.maf` or `*.maf.gz`
-- `reference_fasta`: reference FASTA path (plain `.fa/.fasta` or bgzipped `.fa.gz`)
-- `depth`: depth cutoff for `split.py` (defaults to the number of MAF files)
+For multi-bp lines (with `END=`, the script copies the line once for each bp. 
+This means the number of non-header lines (e.g. from `wc -l`) should represent the number of invariant bp in the file.
 
-If your reference FASTA does **not** have an index (`.fai`), either create one (`samtools faidx`) or set `contigs:` explicitly in `config.yaml`.
+##### `.filtered`
+Contains lines from vcf where any of the following occur:
 
-## Run 
+- the line contains `*` as an allele
+- symbolic / non-ACGT alleles. Among other things, this removes bp with `N`. This is OK if you have assemblies and you assume genotyping error is effectively zero. If you cannot assume that, then these alleles would need to go into `.clean` but the script cannot currently do that.
+- `DP` is less than the `depth` parameter given. Since we are using whole genome alignment we are assuming sites with DP < depth but no explicit indels "*" have missing data still due to structural variation of some sort and should be removed.
 
-The pipeline can be run one of two ways, both from the repo root:
+##### `.clean`
+Should contain only biallelic SNPs in vcf passing all checks as well as mutliallelic SNPs with no indels that will be filtered out by SINGER snakemake pipleine later (and used to adjust the mutation rate). 
+**Note:** If you run the script with `--filter-multiallelic` this will send multi-allelic site to the `.filtered` file instead. 
 
-### On Slurm 
+### 2B Prep for SINGER
 
-A default SLURM profile is provided under `profiles/slurm/`. Edit `profiles/slurm/config.yaml` to customize sbatch options if needed.
-Defaults for account/partition and baseline resources are set in `config.yaml` (`slurm_account`, `slurm_partition`, `default_*`).
+Before sending to SINGER, you may need to reformat your genotypes. VCFs from anchorwave often have genotypes using depth like:
 
-```bash
-snakemake --profile profiles/slurm
-```
+`13      216881  .       G       A,<NON_REF>     .       .       DP=120  GT:AD:PL:DP     .:.:.:. .:30,0,0:0,90,90:30     .:.:.:. .:30,0,0:0,90,90:30     .:30,0,0:0,90,90:30     .:0,30,0:90,90,0:30     .:.:.:.`
 
-### Locally
+In this case, you will need to run `genotype_format4singer.py` on your `.clean` file before continuing.
 
-```bash
-snakemake -j 8 
-```
+`.clean` will be the SNP data you give to SINGER. 
+You will also need a `.bed` format file of bp that are masked. 
+Usually these are everything in your `.filtered` file.
+`filt_to_bed.py` will take a vcf and make a bedfile. 
 
-Common options:
+Run using: `python3 filt_to_bed.py <vcf file of filtered snps> --merge`. 
+Dropping the `--merge` will result in a bigger bedfile with many small, contiguous regions and is not recommended.
 
-- `-j <N>`: number of parallel jobs
-- `--rerun-incomplete`: clean up partial outputs
-- `--printshellcmds`: show executed commands
+### 2C validate
 
-## Workflow Outputs
+As alignment software and GATK versions may produce gvcfs of different formats, you should validate your output makes sense. 
+Some suggestions include:
 
-By default the workflow uses these locations (override in `config.yaml`):
+- `grep -v "#" test.inv | cut -f 5 | sort -n | uniq` -- check that invariant sites file only has "NON_REF" as an ALT allele
+- `grep -v "#"  test.clean | cut -f 8 | sort -n | uniq` -- check that the INFO field has all "DP=`depth`" values
+- `grep -v "#" test.filtered | grep -v "*" | less -S` -- scroll through some filtered records (excluding indels) and check they should all be removed and none are invariant or good SNPs
 
-- `gvcf/` : TASSEL gVCFs (`*.gvcf.gz`) from MAFs
-- `gvcf/cleangVCF/` : cleaned gVCFs from `scripts/dropSV.py`
-- `gvcf/cleangVCF/dropped_indels.bed` : bedfile of large indels
-- `gvcf/cleangVCF/split_gvcf/` : per-contig gVCFs for merging
-- `results/combined/combined.<contig>.gvcf.gz` : merged gVCF per contig
-- `results/split/combined.<contig>.inv` : invariant sites
-- `results/split/combined.<contig>.filtered` : filtered sites
-- `results/split/combined.<contig>.clean` : clean sites
-- `results/split/combined.<contig>.missing.bed` : missing positions
-- `results/split/combined.<contig>.filtered.bed` : merged mask bed
-- `results/summary.md` : markdown summary of jobs run, outputs created, and warnings
-  - If `gzip_output: true`, the `.inv`, `.filtered`, `.clean`, and `.missing.bed` files will have a `.gz` suffix.
+## 3 ARG estimation
 
-## Notes
+Use Nate Pope's [snakemake pipeline](https://github.com/nspope/singer-snakemake/tree/main).
+Using the steps above, there is no need to have a filter file. 
+Use the bedfile made in step 2B as the mask bedfile. 
+Please make sure your recombination 'hapmap' file extends to the end of the chromosome. 
 
-- `scripts/dropSV.py` removes indels larger than `drop_cutoff` (if set in `config.yaml`).
-- `scripts/split.py` supports `--filter-multiallelic` and `--gzip-output` (toggle via `config.yaml`).
-- `scripts/filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
+## 4 ARG processing and 5 Ne modeling (under construction)
 
-## Downstream ARG estimation
-
-Use Nate Pope's Snakemake pipeline:
-
-- `singer-snakemake` (included as a submodule)
-
-For SINGER, use `combined.<contig>.clean` and `combined.<contig>.filtered.bed` as inputs.
+Separate scripts are being developed for these steps. In the meantime, one approach to the functionality here can be found in this interactive jupyter notebook [argcheck.ipynb](argcheck.ipynb). You will need to have `msprime` `tskit` `tszip` `demes` `demesdraw` and `yaml` among other packages. There are many places in the notebook where you will need to **modify** the code or variables to suite your files/system. Example outputs for maize are shown in the notebook preview.
