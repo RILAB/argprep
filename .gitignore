@@ -4,10 +4,10 @@ logs/*
 example_data/*
 .snakemake/
 AGENTS.md
-!example_data/ind1.maf
-!example_data/ind2.maf
-!example_data/ind3.maf
-!example_data/ind4.maf
+!example_data/ind1.maf.gz
+!example_data/ind2.maf.gz
+!example_data/ind3.maf.gz
+!example_data/ind4.maf.gz
 !example_data/ref.dict
 !example_data/ref.fa
 !example_data/ref.fa.fai
