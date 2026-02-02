@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 from snakemake.io import glob_wildcards
@@ -11,7 +12,7 @@ wildcard_constraints:
     contig="[^/]+"
 
 MAF_DIR = Path(config["maf_dir"]).resolve()
-REF_FASTA = Path(config["reference_fasta"]).resolve()
+ORIG_REF_FASTA = Path(config["reference_fasta"]).resolve()
 GVCF_DIR = Path(config.get("gvcf_dir", "gvcf")).resolve()
 RESULTS_DIR = Path(config.get("results_dir", "results")).resolve()
 TASSEL_DIR = Path(config.get("tassel_dir", "tassel-5-standalone")).resolve()
@@ -23,11 +24,96 @@ FILTER_MULTIALLELIC = bool(config.get("filter_multiallelic", False))
 GZIP_OUTPUT = bool(config.get("gzip_output", False))
 NO_MERGE = bool(config.get("no_merge", False))
 
-REF_BASE = REF_FASTA.name
+REF_BASE = ORIG_REF_FASTA.name
 for ext in (".fa", ".fasta"):
     if REF_BASE.endswith(ext):
         REF_BASE = REF_BASE[: -len(ext)]
 
+RENAMED_REF_FASTA = RESULTS_DIR / "refs" / "reference_renamed.fa"
+
+
+def _normalize_contig(name: str) -> str:
+    name = name.strip()
+    name = re.sub(r"^chr", "", name, flags=re.IGNORECASE)
+    name = name.lstrip("0")
+    return name if name else "0"
+
+
+def _read_maf_contigs() -> set[str]:
+    contigs = set()
+    for maf in sorted(MAF_DIR.glob("*.maf")):
+        try:
+            with maf.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("s "):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            contigs.add(parts[1])
+        except OSError:
+            continue
+    return contigs
+
+
+def _read_fasta_contigs(path: Path) -> list[str]:
+    contigs = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith(">"):
+                    contigs.append(line[1:].strip().split()[0])
+    except OSError:
+        pass
+    return contigs
+
+
+def _contig_map():
+    maf_contigs = _read_maf_contigs()
+    fasta_contigs = _read_fasta_contigs(ORIG_REF_FASTA)
+    if not maf_contigs or not fasta_contigs:
+        return False, {}
+
+    maf_norm = {}
+    for name in maf_contigs:
+        maf_norm.setdefault(_normalize_contig(name), []).append(name)
+
+    fasta_norm = {}
+    for name in fasta_contigs:
+        fasta_norm.setdefault(_normalize_contig(name), []).append(name)
+
+    if set(maf_norm.keys()) != set(fasta_norm.keys()):
+        print(
+            "WARNING: MAF and FASTA contig sets differ. "
+            "Only chr/Chr prefixes and leading zeros are auto-resolved.",
+            file=os.sys.stderr,
+        )
+        return False, {}
+
+    mapping = {}
+    for key in maf_norm:
+        if len(maf_norm[key]) != 1 or len(fasta_norm[key]) != 1:
+            print(
+                "WARNING: MAF/FASTA contig mapping is ambiguous; "
+                "not renaming reference.",
+                file=os.sys.stderr,
+            )
+            return False, {}
+        mapping[fasta_norm[key][0]] = maf_norm[key][0]
+
+    if any(k != v for k, v in mapping.items()):
+        print(
+            "WARNING: MAF/FASTA contigs differ only by chr prefix/zeros; "
+            "a renamed reference will be generated to match MAF contigs.",
+            file=os.sys.stderr,
+        )
+        return True, mapping
+
+    return False, {}
+
+
+NEED_RENAME, CONTIG_MAP = _contig_map()
+REF_FASTA = RENAMED_REF_FASTA if NEED_RENAME else ORIG_REF_FASTA
 REF_FAI = str(REF_FASTA) + ".fai"
 REF_DICT = str(REF_FASTA.with_suffix(".dict"))
 
@@ -95,6 +181,29 @@ rule all:
     input:
         [str(_combined_out(c)) for c in CONTIGS],
         [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS],
+
+if NEED_RENAME:
+    rule rename_reference:
+        # Create a renamed reference FASTA to match MAF contig names.
+        input:
+            ref=str(ORIG_REF_FASTA),
+        output:
+            ref=str(RENAMED_REF_FASTA),
+        run:
+            from pathlib import Path
+
+            out_path = Path(output.ref)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(input.ref, "r", encoding="utf-8") as fin, open(
+                output.ref, "w", encoding="utf-8"
+            ) as fout:
+                for line in fin:
+                    if line.startswith(">"):
+                        name = line[1:].strip().split()[0]
+                        new_name = CONTIG_MAP.get(name, name)
+                        fout.write(f">{new_name}\n")
+                    else:
+                        fout.write(line)
 
 rule index_reference:
     # Create reference FASTA index and sequence dictionary for GATK.
