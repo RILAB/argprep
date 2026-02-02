@@ -16,7 +16,7 @@ Clone with submodules so TASSEL is available:
 git clone --recurse-submodules <repo>
 ```
 
-Create and activate the environment:
+Create and activate the environment (do this before running Snakemake):
 
 ```bash
 module load conda
@@ -39,7 +39,7 @@ If your reference FASTA does **not** have an index (`.fai`), either create one (
 From the repo root:
 
 ```bash
-snakemake -j 8
+snakemake -j 8 
 ```
 
 Common options:

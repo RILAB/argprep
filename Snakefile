@@ -5,6 +5,11 @@ from snakemake.io import glob_wildcards
 
 configfile: "config.yaml"
 
+wildcard_constraints:
+    sample="[^/]+",
+    gvcf_base="[^/]+",
+    contig="[^/]+"
+
 MAF_DIR = Path(config["maf_dir"]).resolve()
 REF_FASTA = Path(config["reference_fasta"]).resolve()
 GVCF_DIR = Path(config.get("gvcf_dir", "gvcf")).resolve()
@@ -88,11 +93,11 @@ rule maf_to_gvcf:
         mem_mb=256000,
         time="24:00:00"
     input:
-        maf=lambda wc: str(MAF_DIR / f"{wc.sample}.maf"),
+        maf=str(MAF_DIR / "{sample}.maf"),
         ref=str(REF_FASTA),
     output:
-        gvcf=lambda wc: str(_gvcf_out(f"{wc.sample}To{REF_BASE}")),
-        tbi=lambda wc: str(_gvcf_out(f"{wc.sample}To{REF_BASE}") ) + ".tbi",
+        gvcf=str(GVCF_DIR / (f"{{sample}}To{REF_BASE}.gvcf.gz")),
+        tbi=str(GVCF_DIR / (f"{{sample}}To{REF_BASE}.gvcf.gz.tbi")),
     params:
         tassel_dir=str(TASSEL_DIR),
         sample_name=lambda wc: f"{wc.sample}{SAMPLE_SUFFIX}",
@@ -117,9 +122,11 @@ rule maf_to_gvcf:
 rule drop_sv:
     # Remove large indels from all gVCFs in the directory.
     input:
-        gvcfs=expand(lambda b: str(_gvcf_out(b)), b=GVCF_BASES),
+        gvcfs=[str(_gvcf_out(b)) for b in GVCF_BASES],
     output:
         bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
+        gvcfs=[str(GVCF_DIR / "cleangVCF" / f"{b}.gvcf.gz") for b in GVCF_BASES],
+        tbis=[str(GVCF_DIR / "cleangVCF" / f"{b}.gvcf.gz.tbi") for b in GVCF_BASES],
         clean_dir=directory(str(GVCF_DIR / "cleangVCF")),
     params:
         cutoff=DROP_CUTOFF,
@@ -141,8 +148,8 @@ rule split_gvcf_by_contig:
         ref=str(REF_FASTA),
         bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
     output:
-        gvcf=lambda wc: str(_split_out(wc.gvcf_base, wc.contig)),
-        tbi=lambda wc: str(_split_out(wc.gvcf_base, wc.contig)) + ".tbi",
+        gvcf=str(GVCF_DIR / "cleangVCF" / "split_gvcf" / "{gvcf_base}.{contig}.gvcf.gz"),
+        tbi=str(GVCF_DIR / "cleangVCF" / "split_gvcf" / "{gvcf_base}.{contig}.gvcf.gz.tbi"),
     shell:
         """
         set -euo pipefail
@@ -163,8 +170,12 @@ rule merge_contig:
         ref=str(REF_FASTA),
         bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
     output:
-        gvcf=lambda wc: str(_combined_out(wc.contig)),
-        workspace=directory(lambda wc: str(RESULTS_DIR / "genomicsdb" / f"{wc.contig}")),
+        gvcf=str(RESULTS_DIR / "combined" / "combined.{contig}.gvcf.gz"),
+        workspace=directory(str(RESULTS_DIR / "genomicsdb" / "{contig}")),
+    params:
+        gvcf_args=lambda wc: " ".join(
+            f"-V {str(_split_out(b, wc.contig))}" for b in GVCF_BASES
+        ),
     shell:
         """
         set -euo pipefail
@@ -179,10 +190,6 @@ rule merge_contig:
           -O "{output.gvcf}" \
           -L "{wildcards.contig}"
         """
-    params:
-        gvcf_args=lambda wc: " ".join(
-            f"-V {str(_split_out(b, wc.contig))}" for b in GVCF_BASES
-        ),
 
 
 rule split_gvcf:
@@ -190,10 +197,10 @@ rule split_gvcf:
     input:
         gvcf=lambda wc: str(_combined_out(wc.contig)),
     output:
-        inv=lambda wc: str(_split_prefix(wc.contig)) + ".inv" + SPLIT_SUFFIX,
-        filt=lambda wc: str(_split_prefix(wc.contig)) + ".filtered" + SPLIT_SUFFIX,
-        clean=lambda wc: str(_split_prefix(wc.contig)) + ".clean" + SPLIT_SUFFIX,
-        missing=lambda wc: str(_split_prefix(wc.contig)) + ".missing.bed" + SPLIT_SUFFIX,
+        inv=str(RESULTS_DIR / "split" / ("combined.{contig}.inv" + SPLIT_SUFFIX)),
+        filt=str(RESULTS_DIR / "split" / ("combined.{contig}.filtered" + SPLIT_SUFFIX)),
+        clean=str(RESULTS_DIR / "split" / ("combined.{contig}.clean" + SPLIT_SUFFIX)),
+        missing=str(RESULTS_DIR / "split" / ("combined.{contig}.missing.bed" + SPLIT_SUFFIX)),
     params:
         depth=DEPTH,
         filter_multiallelic=FILTER_MULTIALLELIC,
@@ -203,15 +210,15 @@ rule split_gvcf:
         """
         set -euo pipefail
         mkdir -p "{RESULTS_DIR}/split"
-        args=(python3 "{workflow.basedir}/split.py" --depth="{params.depth}" --out-prefix "{params.out_prefix}")
+        cmd=(python3 "{workflow.basedir}/split.py" --depth="{params.depth}" --out-prefix "{params.out_prefix}")
         if [ "{params.filter_multiallelic}" = "True" ]; then
-          args+=(--filter-multiallelic)
+          cmd+=(--filter-multiallelic)
         fi
         if [ "{params.gzip_output}" = "True" ]; then
-          args+=(--gzip-output)
+          cmd+=(--gzip-output)
         fi
-        args+=("{input.gvcf}")
-        "${args[@]}"
+        cmd+=("{input.gvcf}")
+        "${{cmd[@]}}"
         """
 
 
@@ -222,16 +229,16 @@ rule mask_bed:
         missing=lambda wc: str(_split_prefix(wc.contig)) + ".missing.bed" + SPLIT_SUFFIX,
         dropped=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
     output:
-        bed=lambda wc: str(_split_prefix(wc.contig)) + ".filtered.bed",
+        bed=str(RESULTS_DIR / "split" / "combined.{contig}.filtered.bed"),
     params:
         no_merge=NO_MERGE,
         prefix=lambda wc: str(_split_prefix(wc.contig)),
     shell:
         """
         set -euo pipefail
-        args=(python3 "{workflow.basedir}/filt_to_bed.py" "{params.prefix}")
+        cmd=(python3 "{workflow.basedir}/filt_to_bed.py" "{params.prefix}")
         if [ "{params.no_merge}" = "True" ]; then
-          args+=(--no-merge)
+          cmd+=(--no-merge)
         fi
-        "${args[@]}"
+        "${{cmd[@]}}"
         """
