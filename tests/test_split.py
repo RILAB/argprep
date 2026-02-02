@@ -24,7 +24,7 @@ def test_split_missing_with_fai(tmp_path: Path):
 
     gvcf = tmp_path / "in.gvcf"
     gvcf.write_text(
-        """##fileformat=VCFv4.2\n"
+        "##fileformat=VCFv4.2\n"
         "##contig=<ID=1,length=10>\n"
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
         "1\t3\t.\tA\t<NON_REF>\t.\t.\tEND=5\tGT:AD\t0/0:1,0\n"
@@ -60,7 +60,7 @@ def test_singer_dp_rewrite(tmp_path: Path):
 
     gvcf = tmp_path / "in.gvcf"
     gvcf.write_text(
-        """##fileformat=VCFv4.2\n"
+        "##fileformat=VCFv4.2\n"
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2\tS3\n"
         "1\t2\t.\tA\tG\t.\t.\tDP=30\tGT:AD\t0/1:0,1\t./.:.\t0/0:1,0\n",
         encoding="utf-8",

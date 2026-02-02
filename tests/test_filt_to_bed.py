@@ -23,7 +23,7 @@ def test_filt_to_bed_uses_ref_len(tmp_path: Path):
 
     filtered = tmp_path / "sample.filtered"
     filtered.write_text(
-        """##fileformat=VCFv4.2\n"
+        "##fileformat=VCFv4.2\n"
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
         "1\t10\t.\tAAA\tT\t.\t.\t.\n",
         encoding="utf-8",
@@ -34,6 +34,9 @@ def test_filt_to_bed_uses_ref_len(tmp_path: Path):
 
     dropped = tmp_path / "dropped_indels.bed"
     dropped.write_text("", encoding="utf-8")
+
+    (tmp_path / "sample.inv").write_text("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n", encoding="utf-8")
+    (tmp_path / "sample.clean").write_text("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n", encoding="utf-8")
 
     _run(
         [
