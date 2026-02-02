@@ -1,3 +1,13 @@
+gvcf/*
+results/*
 logs/*
 testing/*
 test_out/*
+.snakemake/
+!testing/ind1.maf
+!testing/ind2.maf
+!testing/ind3.maf
+!testing/ind4.maf
+!testing/ref.dict
+!testing/ref.fa
+!testing/ref.fa.fai

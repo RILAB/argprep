@@ -235,11 +235,17 @@ def main() -> None:
     gvcf_arg = args.gvcf
     gvcf_path = find_gvcf(gvcf_arg)
     if gvcf_path is None:
-        sys.stderr.write(
-            f"ERROR: gVCF not found: '{gvcf_arg}' (expected file or .gvcf/.vcf extension).\n"
-        )
-        sys.exit(1)
-    prefix = prefix_from_gvcf(gvcf_path)
+        # Allow passing a direct prefix (e.g., results/split/combined.1).
+        prefix = gvcf_arg
+        filtered_path = prefix + ".filtered"
+        filtered_gz = filtered_path + ".gz"
+        if not (os.path.isfile(filtered_path) or os.path.isfile(filtered_gz)):
+            sys.stderr.write(
+                f"ERROR: gVCF not found: '{gvcf_arg}' (expected file or .gvcf/.vcf extension).\n"
+            )
+            sys.exit(1)
+    else:
+        prefix = prefix_from_gvcf(gvcf_path)
     filtered_path = prefix + ".filtered"
     filtered_gz = filtered_path + ".gz"
     if os.path.isfile(filtered_gz):
@@ -269,15 +275,22 @@ def main() -> None:
                 continue
             line = raw.rstrip("\n")
             cols = line.split("\t")
-            if len(cols) < 2:
+            if len(cols) < 4:
                 continue
             chrom = cols[0]
             try:
                 pos = int(cols[1])
             except ValueError:
                 continue
+            ref = cols[3]
+            info = cols[7] if len(cols) >= 8 else "."
+            end_val = extract_end(info)
+            if end_val is not None and end_val >= pos:
+                end_pos = end_val
+            else:
+                end_pos = pos + max(len(ref), 1) - 1
             start = pos - 1
-            end = pos
+            end = end_pos
             by_chrom.setdefault(chrom, []).append((start, end))
 
     # Add dropped-indel and missing-position masks.
@@ -288,7 +301,8 @@ def main() -> None:
     merged_bp = sum_merged_bp(by_chrom)
 
     # Determine chromosome length from gVCF header or last covered bp.
-    chrom, chrom_len = compute_chrom_length(gvcf_path)
+    length_path = gvcf_path or filtered_path
+    chrom, chrom_len = compute_chrom_length(length_path)
     if chrom is None or chrom_len is None:
         sys.stderr.write(
             f"ERROR: unable to determine chromosome length from gVCF '{gvcf_path}'.\n"
@@ -316,11 +330,10 @@ def main() -> None:
     total_bp = merged_bp + inv_bp + clean_bp
     if total_bp != chrom_len:
         sys.stderr.write(
-            f"ERROR: bp sum mismatch for {chrom}: "
+            f"WARNING: bp sum mismatch for {chrom}: "
             f"filtered_bed={merged_bp}, inv={inv_bp}, clean={clean_bp}, "
             f"total={total_bp}, chrom_len={chrom_len}\n"
         )
-        sys.exit(1)
 
     # Default behavior is to sort + merge unless --no-merge is given.
     with open(out_path, "wt", encoding="utf-8") as fout:

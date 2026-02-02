@@ -22,7 +22,7 @@ depth: 3
 # Optional: list of contigs to process
 # If omitted, the workflow expects reference_fasta.fai to exist.
 contigs:
-  - chr1
+  - 1
 
 # Optional: override gVCF sample list (default is all *.maf in maf_dir)
 # samples:

@@ -29,6 +29,8 @@ for ext in (".fa", ".fasta"):
     if REF_BASE.endswith(ext):
         REF_BASE = REF_BASE[: -len(ext)]
 
+REF_FAI = str(REF_FASTA) + ".fai"
+REF_DICT = str(REF_FASTA.with_suffix(".dict"))
 
 def _discover_samples():
     if "samples" in config:
@@ -85,6 +87,20 @@ rule all:
         [str(_combined_out(c)) for c in CONTIGS],
         [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS],
 
+rule index_reference:
+    # Create reference FASTA index and sequence dictionary for GATK.
+    input:
+        ref=str(REF_FASTA),
+    output:
+        fai=REF_FAI,
+        dict=REF_DICT,
+    shell:
+        """
+        set -euo pipefail
+        samtools faidx "{input.ref}"
+        picard CreateSequenceDictionary R="{input.ref}" O="{output.dict}"
+        """
+
 
 rule maf_to_gvcf:
     # Convert each MAF to a gzipped gVCF using TASSEL.
@@ -98,6 +114,8 @@ rule maf_to_gvcf:
     output:
         gvcf=str(GVCF_DIR / (f"{{sample}}To{REF_BASE}.gvcf.gz")),
         tbi=str(GVCF_DIR / (f"{{sample}}To{REF_BASE}.gvcf.gz.tbi")),
+    log:
+        str(Path("logs") / "tassel" / "{sample}.log"),
     params:
         tassel_dir=str(TASSEL_DIR),
         sample_name=lambda wc: f"{wc.sample}{SAMPLE_SUFFIX}",
@@ -106,16 +124,27 @@ rule maf_to_gvcf:
         """
         set -euo pipefail
         mkdir -p "{GVCF_DIR}"
+        mkdir -p "$(dirname "{log}")"
+        out_base="{output.gvcf}"
+        if [[ "$out_base" == *.gz ]]; then
+          out_base="${{out_base%.gz}}"
+        fi
         "{params.tassel_dir}/run_pipeline.pl" -Xmx256G -debug \
           -MAFToGVCFPlugin \
           -referenceFasta "{input.ref}" \
           -mafFile "{input.maf}" \
           -sampleName "{params.sample_name}" \
-          -gvcfOutput "{output.gvcf}.tmp" \
-          -fillGaps "{params.fill_gaps}"
-        bgzip -c "{output.gvcf}.tmp" > "{output.gvcf}"
-        tabix -p vcf "{output.gvcf}"
-        rm -f "{output.gvcf}.tmp"
+          -gvcfOutput "$out_base" \
+          -fillGaps "{params.fill_gaps}" \
+          > "{log}" 2>&1
+        if [ ! -f "{output.gvcf}" ]; then
+          echo "ERROR: TASSEL did not write {output.gvcf}" >&2
+          tail -n 200 "{log}" >&2 || true
+          exit 1
+        fi
+        if [ ! -f "{output.tbi}" ]; then
+          tabix -p vcf "{output.gvcf}"
+        fi
         """
 
 
@@ -146,6 +175,8 @@ rule split_gvcf_by_contig:
     input:
         gvcf=lambda wc: str(GVCF_DIR / "cleangVCF" / f"{wc.gvcf_base}.gvcf.gz"),
         ref=str(REF_FASTA),
+        fai=REF_FAI,
+        dict=REF_DICT,
         bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
     output:
         gvcf=str(GVCF_DIR / "cleangVCF" / "split_gvcf" / "{gvcf_base}.{contig}.gvcf.gz"),
@@ -159,7 +190,7 @@ rule split_gvcf_by_contig:
           -V "{input.gvcf}" \
           -L "{wildcards.contig}" \
           -O "{output.gvcf}"
-        tabix -p vcf "{output.gvcf}"
+        tabix -f -p vcf "{output.gvcf}"
         """
 
 
@@ -168,6 +199,8 @@ rule merge_contig:
     input:
         gvcfs=lambda wc: [str(_split_out(b, wc.contig)) for b in GVCF_BASES],
         ref=str(REF_FASTA),
+        fai=REF_FAI,
+        dict=REF_DICT,
         bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
     output:
         gvcf=str(RESULTS_DIR / "combined" / "combined.{contig}.gvcf.gz"),
@@ -196,6 +229,7 @@ rule split_gvcf:
     # Split merged contig gVCF into inv/filtered/clean plus missing bed.
     input:
         gvcf=lambda wc: str(_combined_out(wc.contig)),
+        ref_fai=REF_FAI,
     output:
         inv=str(RESULTS_DIR / "split" / ("combined.{contig}.inv" + SPLIT_SUFFIX)),
         filt=str(RESULTS_DIR / "split" / ("combined.{contig}.filtered" + SPLIT_SUFFIX)),
@@ -210,7 +244,7 @@ rule split_gvcf:
         """
         set -euo pipefail
         mkdir -p "{RESULTS_DIR}/split"
-        cmd=(python3 "{workflow.basedir}/split.py" --depth="{params.depth}" --out-prefix "{params.out_prefix}")
+        cmd=(python3 "{workflow.basedir}/split.py" --depth="{params.depth}" --out-prefix "{params.out_prefix}" --fai "{input.ref_fai}")
         if [ "{params.filter_multiallelic}" = "True" ]; then
           cmd+=(--filter-multiallelic)
         fi
@@ -237,6 +271,7 @@ rule mask_bed:
         """
         set -euo pipefail
         cmd=(python3 "{workflow.basedir}/filt_to_bed.py" "{params.prefix}")
+        cmd+=(--dropped-bed "{input.dropped}")
         if [ "{params.no_merge}" = "True" ]; then
           cmd+=(--no-merge)
         fi

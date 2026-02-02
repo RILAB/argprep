@@ -102,6 +102,28 @@ def open_maybe_gzip(path: str, mode: str) -> TextIO:
     return open(path, mode, encoding="utf-8")
 
 
+def load_fai_lengths(path: str) -> dict[str, int]:
+    """
+    Load contig lengths from a .fai file.
+    Expects: contig<TAB>length as the first two columns.
+    """
+    lengths: dict[str, int] = {}
+    with open(path, "rt", encoding="utf-8") as fin:
+        for raw in fin:
+            if not raw.strip():
+                continue
+            cols = raw.rstrip("\n").split("\t")
+            if len(cols) < 2:
+                continue
+            name = cols[0]
+            try:
+                length = int(cols[1])
+            except ValueError:
+                continue
+            lengths[name] = length
+    return lengths
+
+
 # ------------------------------------------------------------
 # INFO field parsers
 # ------------------------------------------------------------
@@ -244,10 +266,16 @@ def main() -> None:
         action="store_true",
         help="Gzip all output files (.gz)"
     )
+    ap.add_argument(
+        "--fai",
+        default=None,
+        help="Reference .fai to fill missing BED gaps at contig ends.",
+    )
     args = ap.parse_args()
 
     in_path = args.vcf
     depth = args.depth
+    contig_lengths = load_fai_lengths(args.fai) if args.fai else {}
 
     # ---------------- Output prefix logic ----------------
     if args.out_prefix:
@@ -374,6 +402,12 @@ def main() -> None:
                 if pos_for_missing is not None:
                     # Reset gap tracking when chromosome changes.
                     if chrom != last_chrom:
+                        # Close out the previous chromosome tail if we know its length.
+                        if last_chrom is not None and last_end is not None:
+                            chrom_len = contig_lengths.get(last_chrom)
+                            if chrom_len is not None and last_end < chrom_len:
+                                f_missing.write(f"{last_chrom}\t{last_end}\t{chrom_len}\n")
+                                missing_bp += (chrom_len - last_end)
                         last_chrom = chrom
                         last_end = None
 
@@ -392,6 +426,10 @@ def main() -> None:
                         curr_end = pos_for_missing + max(ref_len, 1) - 1
 
                     if last_end is None:
+                        # If the contig doesn't start at position 1, add initial missing span.
+                        if curr_start > 1:
+                            f_missing.write(f"{chrom}\t0\t{curr_start - 1}\n")
+                            missing_bp += (curr_start - 1)
                         last_end = curr_end
                     elif curr_start <= last_end + 1:
                         if curr_end > last_end:
@@ -492,6 +530,13 @@ def main() -> None:
         print(f"  inv:      {inv_bp:,}",file=sys.stderr)
         print(f"  filtered: {filtered_bp:,}",file=sys.stderr)
         print(f"  clean:    {clean_bp:,}",file=sys.stderr)
+        # Close out the final chromosome tail if we know its length.
+        if last_chrom is not None and last_end is not None:
+            chrom_len = contig_lengths.get(last_chrom)
+            if chrom_len is not None and last_end < chrom_len:
+                f_missing.write(f"{last_chrom}\t{last_end}\t{chrom_len}\n")
+                missing_bp += (chrom_len - last_end)
+
         print(f"  missing:  {missing_bp:,}",file=sys.stderr)
     
 if __name__ == "__main__":
