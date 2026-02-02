@@ -129,8 +129,11 @@ REF_DICT = str(REF_FASTA.with_suffix(".dict"))
 def _discover_samples():
     if "samples" in config:
         return list(config["samples"])
-    pattern = str(MAF_DIR / "{sample}.maf")
-    return sorted(set(glob_wildcards(pattern).sample))
+    maf_pattern = str(MAF_DIR / "{sample}.maf")
+    maf_gz_pattern = str(MAF_DIR / "{sample}.maf.gz")
+    samples = set(glob_wildcards(maf_pattern).sample)
+    samples.update(glob_wildcards(maf_gz_pattern).sample)
+    return sorted(samples)
 
 
 def _read_contigs():
@@ -169,6 +172,16 @@ DEPTH = _default_depth()
 
 def _gvcf_out(base):
     return GVCF_DIR / f"{base}.gvcf.gz"
+
+
+def _maf_input(sample):
+    maf = MAF_DIR / f"{sample}.maf"
+    maf_gz = MAF_DIR / f"{sample}.maf.gz"
+    if maf.exists():
+        return str(maf)
+    if maf_gz.exists():
+        return str(maf_gz)
+    return str(maf)
 
 
 def _split_out(base, contig):
@@ -292,12 +305,12 @@ rule summary_report:
                 handle.write(f"- {job}\n")
                 for path in outputs:
                     handle.write(f"  - {path}\n")
-            handle.write("\n## Final outputs\n")
-            final_outputs = (
-                [str(GVCF_DIR / "cleangVCF" / f"{base}.gvcf.gz") for base in GVCF_BASES]
+            handle.write("\n## Files for ARG estimation\n")
+            arg_outputs = (
+                [str(_split_prefix(c)) + ".clean" for c in CONTIGS]
                 + [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS]
             )
-            for path in final_outputs:
+            for path in arg_outputs:
                 handle.write(f"- {path}\n")
             handle.write("\n## Warnings\n")
             if warnings:
@@ -314,7 +327,7 @@ rule maf_to_gvcf:
         mem_mb=256000,
         time="24:00:00"
     input:
-        maf=str(MAF_DIR / "{sample}.maf"),
+        maf=lambda wc: _maf_input(wc.sample),
         ref=str(REF_FASTA),
     output:
         gvcf=str(GVCF_DIR / (f"{{sample}}To{REF_BASE}.gvcf.gz")),
