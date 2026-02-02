@@ -1,0 +1,39 @@
+# Paths
+maf_dir: /path/to/maf_dir
+reference_fasta: /path/to/reference.fa
+
+# Output locations
+gvcf_dir: gvcf
+results_dir: results
+
+# Tools
+# tassel_dir defaults to "tassel-5-standalone" if omitted
+# tassel_dir: /path/to/tassel-5-standalone
+
+# Parameters
+sample_suffix: _anchorwave
+fill_gaps: false
+
+# Required for split.py
+# depth cutoff used to classify sites
+# Example: 10
+# depth: 10
+
+# Optional: list of contigs to process
+# If omitted, the workflow expects reference_fasta.fai to exist.
+# contigs:
+#   - chr1
+#   - chr2
+
+# Optional: override gVCF sample list (default is all *.maf in maf_dir)
+# samples:
+#   - sampleA
+#   - sampleB
+
+# Optional: dropSV.py cutoff for large indels
+# drop_cutoff: 9101264
+
+# Optional: split.py / filt_to_bed.py switches
+filter_multiallelic: false
+gzip_output: false
+no_merge: false
