@@ -58,6 +58,7 @@ Common options:
 - `-j <N>`: number of parallel jobs
 - `--rerun-incomplete`: clean up partial outputs
 - `--printshellcmds`: show executed commands
+- `--keep-temp`: keep temporary intermediates (see Notes)
 
 ## Workflow Outputs
 
@@ -85,6 +86,7 @@ By default the workflow uses these locations (override in `config.yaml`):
 - `no_merge: true` is for troubleshooting per-sample filtered regions only; it will likely break downstream steps because the combined mask bed is not merged.
 - If GenomicsDBImport fails with a buffer-size error, increase `genomicsdb_vcf_buffer_size` and `genomicsdb_segment_size` in `config.yaml` (set them above your longest gVCF line length).
 - Large intermediate files are marked as temporary and removed after a successful run (per-sample gVCFs, cleaned gVCFs, per-contig split gVCFs, and the GenomicsDB workspace). Use `snakemake --keep-temp` if you want to preserve them for debugging or reruns.
+- Resource knobs (memory/threads/time) and GenomicsDB buffer sizes are configurable in `config.yaml` (e.g., `merge_contig_mem_mb`, `maf_to_gvcf_*`, `genomicsdb_*`).
 
 ## Downstream ARG estimation
 

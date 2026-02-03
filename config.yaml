@@ -54,4 +54,4 @@ slurm_partition: high
 # maf_to_gvcf_time: "24:00:00"
 # merge_contig_threads: 2
 # merge_contig_time: "48:00:00"
-# merge_contig_mem_mb: 256000
+merge_contig_mem_mb: 256000
