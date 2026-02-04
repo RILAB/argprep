@@ -13,19 +13,21 @@ MAF_DIR=""
 OUT_DIR=""
 ACCOUNT=""
 PARTITION=""
+MAX_CONCURRENT=""
 
-while getopts "m:o:A:P:" opt; do
+while getopts "m:o:A:P:J:" opt; do
   case "$opt" in
     m) MAF_DIR="$OPTARG" ;;
     o) OUT_DIR="$OPTARG" ;;
     A) ACCOUNT="$OPTARG" ;;
     P) PARTITION="$OPTARG" ;;
+    J) MAX_CONCURRENT="$OPTARG" ;;
     *) ;;
   esac
 done
 
 if [ -z "$MAF_DIR" ] || [ -z "$OUT_DIR" ]; then
-  echo "Usage: $0 -m <maf_dir> -o <out_dir> [-A <account>] [-P <partition>]"
+  echo "Usage: $0 -m <maf_dir> -o <out_dir> [-A <account>] [-P <partition>] [-J <max_concurrent>]"
   exit 1
 fi
 
@@ -44,6 +46,21 @@ LOG_DIR="$REPO_ROOT/logs"
 mkdir -p "$OUT_DIR" "$LOG_DIR"
 FILL_GAPS="false"
 SAMPLE_SUFFIX="_anchorwave"
+CONFIG_PATH="$REPO_ROOT/config.yaml"
+
+if [ -z "$MAX_CONCURRENT" ] && [ -f "$CONFIG_PATH" ]; then
+  MAX_CONCURRENT="$(awk -F: '
+    /^[[:space:]]*maf_to_gvcf_array_max_jobs:/ {
+      val=$2
+      sub(/#.*/, "", val)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+      print val
+      exit
+    }' "$CONFIG_PATH")"
+fi
+if [ -z "$MAX_CONCURRENT" ]; then
+  MAX_CONCURRENT=4
+fi
 
 # Reference FASTA must live in the MAF directory.
 if [ -f "$MAF_DIR/reference.fa" ]; then
@@ -73,8 +90,8 @@ fi
 # If not running as a SLURM array task, submit ourselves with an array sized to the MAF count.
 if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
   N="${#MAF_FILES[@]}"
-  ARRAY="0-$((N-1))%4"
-  echo "Submitting SLURM array with $N tasks (max 4 running at a time): $ARRAY"
+  ARRAY="0-$((N-1))%${MAX_CONCURRENT}"
+  echo "Submitting SLURM array with $N tasks (max ${MAX_CONCURRENT} running at a time): $ARRAY"
   SBATCH_ARGS=(--array="${ARRAY}" --output "${LOG_DIR}/%x_%A_%a.out" --error "${LOG_DIR}/%x_%A_%a.err")
   if [ -n "$ACCOUNT" ]; then
     SBATCH_ARGS+=(--account "$ACCOUNT")

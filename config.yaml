@@ -41,6 +41,9 @@ no_merge: false
 # genomicsdb_vcf_buffer_size: 1048576
 # genomicsdb_segment_size: 1048576
 
+# Optional: max concurrent tasks for scripts/maf_to_gvcf.sh SLURM array
+# maf_to_gvcf_array_max_jobs: 4
+
 # Default SLURM resources (used by the provided profile)
 default_threads: 2
 default_mem_mb: 48000

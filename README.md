@@ -87,6 +87,7 @@ By default the workflow uses these locations (override in `config.yaml`):
 - If GenomicsDBImport fails with a buffer-size error, increase `genomicsdb_vcf_buffer_size` and `genomicsdb_segment_size` in `config.yaml` (set them above your longest gVCF line length).
 - Large intermediate files are marked as temporary and removed after a successful run (per-sample gVCFs, cleaned gVCFs, per-contig split gVCFs, and the GenomicsDB workspace). Use `snakemake --keep-temp` if you want to preserve them for debugging or reruns.
 - Resource knobs (memory/threads/time) and GenomicsDB buffer sizes are configurable in `config.yaml` (e.g., `merge_contig_mem_mb`, `maf_to_gvcf_*`, `genomicsdb_*`).
+- To cap the SLURM array concurrency for `scripts/maf_to_gvcf.sh`, set `maf_to_gvcf_array_max_jobs` in `config.yaml` (default 4).
 
 ## Downstream ARG estimation
 
