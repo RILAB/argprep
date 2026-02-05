@@ -85,6 +85,7 @@ By default the workflow uses these locations (override in `config.yaml`):
 - `scripts/filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
 - `no_merge: true` is for troubleshooting per-sample filtered regions only; it will likely break downstream steps because the combined mask bed is not merged.
 - Warning: The workflow defaults to haploid genotyping (`ploidy: 1`) and has not been validated on diploid genome assemblies.
+- Optional: enable `vt_normalize: true` in `config.yaml` to normalize merged gVCFs with `vt normalize` after `GenotypeGVCFs`.
 - If GenomicsDBImport fails with a buffer-size error, increase `genomicsdb_vcf_buffer_size` and `genomicsdb_segment_size` in `config.yaml` (set them above your longest gVCF line length).
 - Large intermediate files are marked as temporary and removed after a successful run (per-sample gVCFs, cleaned gVCFs, per-contig split gVCFs, and the GenomicsDB workspace). Use `snakemake --keep-temp` if you want to preserve them for debugging or reruns.
 - Resource knobs (memory/threads/time) and GenomicsDB buffer sizes are configurable in `config.yaml` (e.g., `merge_contig_mem_mb`, `maf_to_gvcf_*`, `genomicsdb_*`).

@@ -110,43 +110,6 @@ def read_bed_intervals(path: str, by_chrom: Dict[str, List[Tuple[int, int]]]) ->
             by_chrom.setdefault(chrom, []).append((start, end))
 
 
-def count_vcf_records(path: str) -> int | None:
-    """
-    Count non-header records in a VCF/gVCF file.
-    """
-    try:
-        count = 0
-        with open_maybe_gzip(path, "rt") as fin:
-            for raw in fin:
-                if raw.startswith("#"):
-                    continue
-                if raw.strip():
-                    count += 1
-        return count
-    except OSError:
-        return None
-
-
-def parse_contig_lengths(path: str) -> Dict[str, int]:
-    """
-    Parse ##contig header lines to extract reference lengths.
-    Returns a map of contig ID -> length for any lines that include length=.
-    """
-    lengths: Dict[str, int] = {}
-    with open_maybe_gzip(path, "rt") as fin:
-        for raw in fin:
-            if not raw.startswith("##"):
-                break
-            if raw.startswith("##contig=<") and "length=" in raw:
-                content = raw.strip().lstrip("##contig=<").rstrip(">")
-                parts = {kv.split("=", 1)[0]: kv.split("=", 1)[1] for kv in content.split(",") if "=" in kv}
-                cid = parts.get("ID")
-                clen = parts.get("length")
-                if cid and clen and clen.isdigit():
-                    lengths[cid] = int(clen)
-    return lengths
-
-
 def extract_end(info: str) -> int | None:
     """
     Parse END= from a VCF INFO field, if present.
@@ -160,42 +123,6 @@ def extract_end(info: str) -> int | None:
             except ValueError:
                 return None
     return None
-
-
-def compute_chrom_length(path: str) -> tuple[str | None, int | None]:
-    """
-    Determine chromosome length from gVCF.
-    Prefer header ##contig length; otherwise use the last covered base.
-    Assumes the file is for a single chromosome.
-    """
-    contigs = parse_contig_lengths(path)
-    last_chrom: str | None = None
-    last_end: int | None = None
-    with open_maybe_gzip(path, "rt") as fin:
-        for raw in fin:
-            if raw.startswith("#"):
-                continue
-            cols = raw.rstrip("\n").split("\t")
-            if len(cols) < 4:
-                continue
-            chrom = cols[0]
-            try:
-                pos = int(cols[1])
-            except ValueError:
-                continue
-            ref = cols[3]
-            end_val = extract_end(cols[7]) if len(cols) >= 8 else None
-            if end_val is not None and end_val >= pos:
-                end = end_val
-            else:
-                end = pos + max(len(ref), 1) - 1
-            last_chrom = chrom
-            last_end = end
-    if last_chrom is None:
-        return None, None
-    if last_chrom in contigs:
-        return last_chrom, contigs[last_chrom]
-    return last_chrom, last_end
 
 
 def sum_merged_bp(by_chrom: Dict[str, List[Tuple[int, int]]]) -> int:
@@ -282,58 +209,13 @@ def main() -> None:
                 pos = int(cols[1])
             except ValueError:
                 continue
-            ref = cols[3]
-            info = cols[7] if len(cols) >= 8 else "."
-            end_val = extract_end(info)
-            if end_val is not None and end_val >= pos:
-                end_pos = end_val
-            else:
-                end_pos = pos + max(len(ref), 1) - 1
             start = pos - 1
-            end = end_pos
+            end = pos
             by_chrom.setdefault(chrom, []).append((start, end))
 
     # Add dropped-indel and missing-position masks.
     read_bed_intervals(dropped_bed, by_chrom)
     read_bed_intervals(missing_bed, by_chrom)
-
-    # Compute merged bp for the coverage check.
-    merged_bp = sum_merged_bp(by_chrom)
-
-    # Determine chromosome length from gVCF header or last covered bp.
-    length_path = gvcf_path or filtered_path
-    chrom, chrom_len = compute_chrom_length(length_path)
-    if chrom is None or chrom_len is None:
-        sys.stderr.write(
-            f"ERROR: unable to determine chromosome length from gVCF '{gvcf_path}'.\n"
-        )
-        sys.exit(1)
-
-    # Read .inv and .clean to validate coverage accounting.
-    inv_path = prefix + ".inv"
-    clean_path = prefix + ".clean"
-    if os.path.isfile(inv_path + ".gz"):
-        inv_path = inv_path + ".gz"
-    if os.path.isfile(clean_path + ".gz"):
-        clean_path = clean_path + ".gz"
-
-    inv_bp = count_vcf_records(inv_path) if os.path.isfile(inv_path) else None
-    clean_bp = count_vcf_records(clean_path) if os.path.isfile(clean_path) else None
-
-    if inv_bp is None or clean_bp is None:
-        sys.stderr.write(
-            f"ERROR: unable to read .inv and/or .clean for length check "
-            f"(inv='{inv_path}', clean='{clean_path}').\n"
-        )
-        sys.exit(1)
-
-    total_bp = merged_bp + inv_bp + clean_bp
-    if total_bp != chrom_len:
-        sys.stderr.write(
-            f"WARNING: bp sum mismatch for {chrom}: "
-            f"filtered_bed={merged_bp}, inv={inv_bp}, clean={clean_bp}, "
-            f"total={total_bp}, chrom_len={chrom_len}\n"
-        )
 
     # Default behavior is to sort + merge unless --no-merge is given.
     with open(out_path, "wt", encoding="utf-8") as fout:

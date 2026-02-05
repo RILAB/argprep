@@ -33,6 +33,8 @@ MERGE_CONTIG_THREADS = int(config.get("merge_contig_threads", config.get("defaul
 MERGE_CONTIG_MEM_MB = int(config.get("merge_contig_mem_mb", config.get("default_mem_mb", 48000)))
 MERGE_CONTIG_TIME = str(config.get("merge_contig_time", config.get("default_time", "48:00:00")))
 PLOIDY = int(config.get("ploidy", 2))
+VT_NORMALIZE = bool(config.get("vt_normalize", False))
+VT_PATH = str(config.get("vt_path", "vt"))
 
 REF_BASE = ORIG_REF_FASTA.name
 if REF_BASE.endswith(".gz"):
@@ -42,6 +44,8 @@ for ext in (".fa", ".fasta"):
         REF_BASE = REF_BASE[: -len(ext)]
 
 RENAMED_REF_FASTA = RESULTS_DIR / "refs" / "reference_gvcf.fa"
+COMBINED_DIR = RESULTS_DIR / "combined"
+COMBINED_RAW_DIR = RESULTS_DIR / "combined_raw"
 
 
 def _normalize_contig(name: str) -> str:
@@ -214,7 +218,11 @@ def _split_out(base, contig):
 
 
 def _combined_out(contig):
-    return RESULTS_DIR / "combined" / f"combined.{contig}.gvcf.gz"
+    return COMBINED_DIR / f"combined.{contig}.gvcf.gz"
+
+
+def _combined_raw_out(contig):
+    return COMBINED_RAW_DIR / f"combined.{contig}.gvcf.gz"
 
 
 def _split_prefix(contig):
@@ -228,6 +236,7 @@ rule all:
     input:
         [str(_combined_out(c)) for c in CONTIGS],
         [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS],
+        [str(_split_prefix(c)) + ".coverage.txt" for c in CONTIGS],
         str(RESULTS_DIR / "summary.md"),
 
 rule rename_reference:
@@ -283,6 +292,8 @@ rule summary_report:
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
         jobs = [
+            ("index_reference", [REF_FAI, REF_DICT]),
+            ("rename_reference", [str(RENAMED_REF_FASTA)]),
             ("maf_to_gvcf", [str(_gvcf_out(base)) for base in GVCF_BASES]),
             (
                 "drop_sv",
@@ -293,19 +304,26 @@ rule summary_report:
                 "split_gvcf_by_contig",
                 [str(_split_out(base, contig)) for contig in CONTIGS for base in GVCF_BASES],
             ),
-            ("merge_contig", [str(_combined_out(c)) for c in CONTIGS]),
-            (
-                "split_gvcf",
-                [
-                    str(_split_prefix(c)) + suffix
-                    for c in CONTIGS
-                    for suffix in (".inv", ".filtered", ".clean", ".missing.bed")
-                ],
-            ),
-            ("mask_bed", [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS]),
         ]
-        jobs.insert(0, ("rename_reference", [str(RENAMED_REF_FASTA)]))
-        jobs.insert(0, ("index_reference", [REF_FAI, REF_DICT]))
+        if VT_NORMALIZE:
+            jobs.append(("merge_contig_raw", [str(_combined_raw_out(c)) for c in CONTIGS]))
+            jobs.append(("normalize_merged_gvcf", [str(_combined_out(c)) for c in CONTIGS]))
+        else:
+            jobs.append(("merge_contig", [str(_combined_out(c)) for c in CONTIGS]))
+        jobs.extend(
+            [
+                (
+                    "split_gvcf",
+                    [
+                        str(_split_prefix(c)) + suffix
+                        for c in CONTIGS
+                        for suffix in (".inv", ".filtered", ".clean", ".missing.bed")
+                    ],
+                ),
+                ("check_split_coverage", [str(_split_prefix(c)) + ".coverage.txt" for c in CONTIGS]),
+                ("mask_bed", [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS]),
+            ]
+        )
 
         temp_paths = set()
         temp_paths.update(str(_gvcf_out(base)) for base in GVCF_BASES)
@@ -323,6 +341,8 @@ rule summary_report:
             for base in GVCF_BASES
         )
         temp_paths.update(str(RESULTS_DIR / "genomicsdb" / f"{contig}") for contig in CONTIGS)
+        if VT_NORMALIZE:
+            temp_paths.update(str(_combined_raw_out(c)) for c in CONTIGS)
 
         # Collect warnings from logs and snakemake logs.
         warnings = []
@@ -485,46 +505,108 @@ rule split_gvcf_by_contig:
         """
 
 
-rule merge_contig:
-    # Merge all samples for a contig with GenomicsDBImport + GenotypeGVCFs.
-    threads: MERGE_CONTIG_THREADS
-    resources:
-        mem_mb=MERGE_CONTIG_MEM_MB,
-        time=MERGE_CONTIG_TIME,
-    input:
-        gvcfs=lambda wc: [str(_split_out(b, wc.contig)) for b in GVCF_BASES],
-        tbis=lambda wc: [str(_split_out(b, wc.contig)) + ".tbi" for b in GVCF_BASES],
-        ref=str(REF_FASTA_GATK),
-        fai=REF_FAI,
-        dict=REF_DICT,
-        bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
-    output:
-        gvcf=str(RESULTS_DIR / "combined" / "combined.{contig}.gvcf.gz"),
-        workspace=temp(directory(str(RESULTS_DIR / "genomicsdb" / "{contig}"))),
-    params:
-        gvcf_args=lambda wc: " ".join(
-            f"-V {str(_split_out(b, wc.contig))}" for b in GVCF_BASES
-        ),
-        vcf_buffer_size=GENOMICSDB_VCF_BUFFER_SIZE,
-        segment_size=GENOMICSDB_SEGMENT_SIZE,
-    shell:
-        """
-        set -euo pipefail
-        mkdir -p "{RESULTS_DIR}/combined"
-        gatk --java-options "-Xmx100g -Xms100g" GenomicsDBImport \
-          {params.gvcf_args} \
-          --genomicsdb-workspace-path "{output.workspace}" \
-          -L "{wildcards.contig}" \
-          --genomicsdb-vcf-buffer-size {params.vcf_buffer_size} \
-          --genomicsdb-segment-size {params.segment_size}
-        gatk --java-options "-Xmx100g -Xms100g" GenotypeGVCFs \
-          -R "{input.ref}" \
-          -V "gendb://{output.workspace}" \
-          -O "{output.gvcf}" \
-          -L "{wildcards.contig}" \
-          --include-non-variant-sites \
-          --sample-ploidy {PLOIDY}
-        """
+if VT_NORMALIZE:
+    rule merge_contig_raw:
+        # Merge all samples for a contig with GenomicsDBImport + GenotypeGVCFs.
+        threads: MERGE_CONTIG_THREADS
+        resources:
+            mem_mb=MERGE_CONTIG_MEM_MB,
+            time=MERGE_CONTIG_TIME,
+        input:
+            gvcfs=lambda wc: [str(_split_out(b, wc.contig)) for b in GVCF_BASES],
+            tbis=lambda wc: [str(_split_out(b, wc.contig)) + ".tbi" for b in GVCF_BASES],
+            ref=str(REF_FASTA_GATK),
+            fai=REF_FAI,
+            dict=REF_DICT,
+            bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
+        output:
+            gvcf=str(COMBINED_RAW_DIR / "combined.{contig}.gvcf.gz"),
+            workspace=temp(directory(str(RESULTS_DIR / "genomicsdb" / "{contig}"))),
+        params:
+            gvcf_args=lambda wc: " ".join(
+                f"-V {str(_split_out(b, wc.contig))}" for b in GVCF_BASES
+            ),
+            vcf_buffer_size=GENOMICSDB_VCF_BUFFER_SIZE,
+            segment_size=GENOMICSDB_SEGMENT_SIZE,
+        shell:
+            """
+            set -euo pipefail
+            mkdir -p "{COMBINED_RAW_DIR}"
+            gatk --java-options "-Xmx100g -Xms100g" GenomicsDBImport \
+              {params.gvcf_args} \
+              --genomicsdb-workspace-path "{output.workspace}" \
+              -L "{wildcards.contig}" \
+              --genomicsdb-vcf-buffer-size {params.vcf_buffer_size} \
+              --genomicsdb-segment-size {params.segment_size}
+            gatk --java-options "-Xmx100g -Xms100g" GenotypeGVCFs \
+              -R "{input.ref}" \
+              -V "gendb://{output.workspace}" \
+              -O "{output.gvcf}" \
+              -L "{wildcards.contig}" \
+              --include-non-variant-sites \
+              --sample-ploidy {PLOIDY}
+            """
+else:
+    rule merge_contig:
+        # Merge all samples for a contig with GenomicsDBImport + GenotypeGVCFs.
+        threads: MERGE_CONTIG_THREADS
+        resources:
+            mem_mb=MERGE_CONTIG_MEM_MB,
+            time=MERGE_CONTIG_TIME,
+        input:
+            gvcfs=lambda wc: [str(_split_out(b, wc.contig)) for b in GVCF_BASES],
+            tbis=lambda wc: [str(_split_out(b, wc.contig)) + ".tbi" for b in GVCF_BASES],
+            ref=str(REF_FASTA_GATK),
+            fai=REF_FAI,
+            dict=REF_DICT,
+            bed=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
+        output:
+            gvcf=str(COMBINED_DIR / "combined.{contig}.gvcf.gz"),
+            workspace=temp(directory(str(RESULTS_DIR / "genomicsdb" / "{contig}"))),
+        params:
+            gvcf_args=lambda wc: " ".join(
+                f"-V {str(_split_out(b, wc.contig))}" for b in GVCF_BASES
+            ),
+            vcf_buffer_size=GENOMICSDB_VCF_BUFFER_SIZE,
+            segment_size=GENOMICSDB_SEGMENT_SIZE,
+        shell:
+            """
+            set -euo pipefail
+            mkdir -p "{COMBINED_DIR}"
+            gatk --java-options "-Xmx100g -Xms100g" GenomicsDBImport \
+              {params.gvcf_args} \
+              --genomicsdb-workspace-path "{output.workspace}" \
+              -L "{wildcards.contig}" \
+              --genomicsdb-vcf-buffer-size {params.vcf_buffer_size} \
+              --genomicsdb-segment-size {params.segment_size}
+            gatk --java-options "-Xmx100g -Xms100g" GenotypeGVCFs \
+              -R "{input.ref}" \
+              -V "gendb://{output.workspace}" \
+              -O "{output.gvcf}" \
+              -L "{wildcards.contig}" \
+              --include-non-variant-sites \
+              --sample-ploidy {PLOIDY}
+            """
+
+
+if VT_NORMALIZE:
+    rule normalize_merged_gvcf:
+        # Normalize merged gVCFs with vt after GenotypeGVCFs.
+        input:
+            gvcf=str(COMBINED_RAW_DIR / "combined.{contig}.gvcf.gz"),
+            ref=str(REF_FASTA_GATK),
+        output:
+            gvcf=str(COMBINED_DIR / "combined.{contig}.gvcf.gz"),
+        shell:
+            """
+            set -euo pipefail
+            mkdir -p "{COMBINED_DIR}"
+            tmp_vcf="{output.gvcf}.tmp.vcf"
+            "{VT_PATH}" normalize "{input.gvcf}" -r "{input.ref}" -o "$tmp_vcf"
+            bgzip -f -c "$tmp_vcf" > "{output.gvcf}"
+            rm -f "$tmp_vcf"
+            tabix -f -p vcf "{output.gvcf}"
+            """
 
 
 rule split_gvcf:
@@ -555,6 +637,26 @@ rule split_gvcf:
         fi
         cmd+=("{input.gvcf}")
         "${{cmd[@]}}"
+        """
+
+
+rule check_split_coverage:
+    # Validate that clean + inv + filtered bed sum to contig length.
+    input:
+        clean=lambda wc: str(_split_prefix(wc.contig)) + ".clean" + SPLIT_SUFFIX,
+        inv=lambda wc: str(_split_prefix(wc.contig)) + ".inv" + SPLIT_SUFFIX,
+        bed=lambda wc: str(_split_prefix(wc.contig)) + ".filtered.bed",
+        fai=REF_FAI,
+    output:
+        report=str(RESULTS_DIR / "split" / "combined.{contig}.coverage.txt"),
+    params:
+        prefix=lambda wc: str(_split_prefix(wc.contig)),
+    shell:
+        """
+        set -euo pipefail
+        python3 "{workflow.basedir}/scripts/check_split_coverage.py" \
+          "{params.prefix}" \
+          --fai "{input.fai}"
         """
 
 
