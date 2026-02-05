@@ -520,7 +520,8 @@ rule merge_contig:
           -R "{input.ref}" \
           -V "gendb://{output.workspace}" \
           -O "{output.gvcf}" \
-          -L "{wildcards.contig}"
+          -L "{wildcards.contig}" \
+          --include-non-variant-sites
         """
 
 
