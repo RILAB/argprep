@@ -74,6 +74,7 @@ By default the workflow uses these locations (override in `config.yaml`):
 - `results/split/combined.<contig>.clean` : clean sites
 - `results/split/combined.<contig>.missing.bed` : missing positions
 - `results/split/combined.<contig>.filtered.bed` : merged mask bed
+- `results/split/combined.<contig>.accessible.npz` : boolean accessibility array (union of clean + invariant sites), for scikit-allel statistics
 - `results/summary.md` : markdown summary of jobs run, outputs created, and warnings
 
 ## Notes
@@ -83,6 +84,7 @@ By default the workflow uses these locations (override in `config.yaml`):
 - `scripts/dropSV.py` removes indels larger than `drop_cutoff` (if set in `config.yaml`).
 - `scripts/split.py` supports `--filter-multiallelic` and `--bgzip-output` (toggle via `config.yaml`).
 - `scripts/filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
+- `make_accessibility` builds a per-contig accessibility array from the union of `combined.<contig>.clean` and `combined.<contig>.inv` using the reference `.fai` to size the array. The output is a compressed NumPy archive containing a boolean array named `mask`, intended for scikit-allel statistics.
 - `no_merge: true` is for troubleshooting per-sample filtered regions only; it will likely break downstream steps because the combined mask bed is not merged.
 - Warning: The workflow defaults to haploid genotyping (`ploidy: 1`) and has not been validated on diploid genome assemblies.
 - Optional: enable `vt_normalize: true` in `config.yaml` to normalize merged gVCFs with `vt normalize` after `GenotypeGVCFs`.
@@ -91,6 +93,17 @@ By default the workflow uses these locations (override in `config.yaml`):
 - Resource knobs (memory/threads/time) and GenomicsDB buffer sizes are configurable in `config.yaml` (e.g., `merge_contig_mem_mb`, `maf_to_gvcf_*`, `genomicsdb_*`).
 - To cap the SLURM array concurrency for `scripts/maf_to_gvcf.sh`, set `maf_to_gvcf_array_max_jobs` in `config.yaml` (default 4).
 
-## Downstream ARG estimation
+## Downstream Uses
+
+### ARG estimation
 
 Use Nate Pope's SINGER Snakemake [pipeline](https://github.com/nspope/singer-snakemake) with `combined.<contig>.clean` and `combined.<contig>.filtered.bed` as inputs.
+
+### Population genetic statistics 
+
+If you use scikit-allel, you can use the `combined.<contig>.clean` VCF and load the accessibility mask like this:
+
+```python
+import numpy as np
+mask = np.load("results/split/combined.1.accessible.npz")["mask"]
+```

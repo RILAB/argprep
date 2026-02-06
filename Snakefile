@@ -229,6 +229,10 @@ def _split_prefix(contig):
     return RESULTS_DIR / "split" / f"combined.{contig}"
 
 
+def _accessibility_out(contig):
+    return RESULTS_DIR / "split" / f"combined.{contig}.accessible.npz"
+
+
 SPLIT_SUFFIX = ".gz" if BGZIP_OUTPUT else ""
 
 rule all:
@@ -237,6 +241,7 @@ rule all:
         [str(_combined_out(c)) for c in CONTIGS],
         [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS],
         [str(_split_prefix(c)) + ".coverage.txt" for c in CONTIGS],
+        [str(_accessibility_out(c)) for c in CONTIGS],
         str(RESULTS_DIR / "summary.md"),
 
 rule rename_reference:
@@ -322,6 +327,7 @@ rule summary_report:
                 ),
                 ("check_split_coverage", [str(_split_prefix(c)) + ".coverage.txt" for c in CONTIGS]),
                 ("mask_bed", [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS]),
+                ("make_accessibility", [str(_accessibility_out(c)) for c in CONTIGS]),
             ]
         )
 
@@ -393,9 +399,14 @@ rule summary_report:
             arg_outputs = (
                 [str(_split_prefix(c)) + ".clean" for c in CONTIGS]
                 + [str(_split_prefix(c)) + ".filtered.bed" for c in CONTIGS]
+                + [str(_accessibility_out(c)) for c in CONTIGS]
             )
             for path in arg_outputs:
                 handle.write(f"- {path}\n")
+            handle.write(
+                "\n* Accessibility arrays are provided to enable computing statistics with "
+                "scikit-allel.\n"
+            )
             handle.write("\n## Warnings\n")
             if warnings:
                 for line in warnings:
@@ -680,4 +691,26 @@ rule mask_bed:
           cmd+=(--no-merge)
         fi
         "${{cmd[@]}}"
+        """
+
+
+rule make_accessibility:
+    # Build boolean accessibility array from clean + inv VCFs per contig.
+    input:
+        clean=lambda wc: str(_split_prefix(wc.contig)) + ".clean" + SPLIT_SUFFIX,
+        inv=lambda wc: str(_split_prefix(wc.contig)) + ".inv" + SPLIT_SUFFIX,
+        fai=REF_FAI,
+    output:
+        mask=str(RESULTS_DIR / "split" / "combined.{contig}.accessible.npz"),
+    params:
+        contig="{contig}",
+    shell:
+        """
+        set -euo pipefail
+        python3 "{workflow.basedir}/scripts/build_accessibility.py" \
+          --clean "{input.clean}" \
+          --inv "{input.inv}" \
+          --fai "{input.fai}" \
+          --contig "{params.contig}" \
+          --output "{output.mask}"
         """
