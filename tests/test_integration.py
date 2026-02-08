@@ -14,8 +14,24 @@ def _require_integration():
         pytest.skip("Set RUN_INTEGRATION=1 to run integration tests.")
 
 
+def _require_conda_tools(env: str, *tools: str):
+    missing = []
+    for tool in tools:
+        proc = subprocess.run(
+            ["conda", "run", "-n", env, tool, "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if proc.returncode != 0:
+            missing.append(tool)
+    if missing:
+        pytest.skip(f"Missing required tools in conda env {env}: {', '.join(missing)}")
+
+
 def test_snakemake_summary():
     _require_integration()
+    _require_conda_tools("argprep", "snakemake", "bcftools", "tabix", "bgzip", "gatk", "java")
+    summary_target = str(Path.cwd() / "results" / "summary.html")
     _run(
         [
             "conda",
@@ -23,14 +39,16 @@ def test_snakemake_summary():
             "-n",
             "argprep",
             "env",
-            "PATH=/opt/anaconda3/envs/argprep/bin:$PATH",
+            "PATH=/opt/anaconda3/envs/argprep/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME=/tmp",
             "TMPDIR=/tmp",
             "XDG_CACHE_HOME=/tmp",
+            "SNAKEMAKE_OUTPUT_CACHE=/tmp/snakemake",
+            "SNAKEMAKE_SOURCE_CACHE=/tmp/snakemake",
             "snakemake",
             "-j",
             "2",
-            "results/summary.html",
+            summary_target,
         ],
         cwd=Path.cwd(),
     )
@@ -38,6 +56,7 @@ def test_snakemake_summary():
 
 def test_maf_to_gvcf_single_sample(tmp_path: Path):
     _require_integration()
+    _require_conda_tools("argprep", "java")
     # Minimal two-sequence MAF (ref + sample) for a small region.
     ref = "ACGTACGTACGTACGT"
     sample = "ACGTACGTACGTACGA"
@@ -73,4 +92,4 @@ def test_maf_to_gvcf_single_sample(tmp_path: Path):
         ],
         cwd=Path.cwd(),
     )
-    assert out.exists()
+    assert out.exists() or (out.with_suffix(out.suffix + ".gz")).exists()

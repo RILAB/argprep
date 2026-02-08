@@ -1,5 +1,8 @@
 import subprocess
+import shutil
 from pathlib import Path
+
+import pytest
 
 
 def _run(cmd, cwd=None):
@@ -26,6 +29,10 @@ def _count_records(path: Path) -> int:
 
 
 def test_drop_sv_filters_large_indel(tmp_path: Path):
+    if shutil.which("bcftools") is None:
+        pytest.skip("bcftools not available")
+    if shutil.which("bgzip") is None or shutil.which("tabix") is None:
+        pytest.skip("bgzip/tabix not available")
     vcf = tmp_path / "sample.gvcf"
     _write_vcf(vcf)
 
