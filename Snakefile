@@ -739,7 +739,7 @@ rule summary_report:
                     )
                 )
 
-            handle.write("<h2>Invariant sites per 1Mb window (window-count histogram)</h2>\n")
+            handle.write("<h2>Invariant sites per 1Mb window</h2>\n")
             # Prefer invariant BED if present; fallback to .inv VCF counts.
             for contig in contig_names:
                 if contig not in inv_counts:
@@ -778,20 +778,23 @@ rule summary_report:
             for contig in contig_names:
                 if contig not in inv_counts:
                     continue
-                counts, labels = _histogram(inv_counts[contig], bins=20)
+                labels = []
+                for idx in range(len(inv_counts[contig])):
+                    start_mb = idx
+                    labels.append(f"{start_mb}-{start_mb + 1}Mb")
                 handle.write(f"<h3>{html.escape(contig)}</h3>\n")
                 handle.write(
                     _svg_bar_chart(
-                        counts,
+                        inv_counts[contig],
                         labels=labels,
-                        title=f"Invariant sites per 1Mb window: {contig}",
-                        x_label="Sites per 1Mb window",
-                        y_label="Number of windows",
+                        title=f"Invariant sites: {contig}",
+                        x_label="1Mb window",
+                        y_label="Site count",
                         tick_stride=max(len(labels) // 12, 1),
                     )
                 )
 
-            handle.write("<h2>Variable sites per 1Mb window (window-count histogram)</h2>\n")
+            handle.write("<h2>Variable sites per 1Mb window</h2>\n")
             for clean_path in input.cleans:
                 try:
                     with _open_text(clean_path) as f_in:
@@ -822,15 +825,18 @@ rule summary_report:
             for contig in contig_names:
                 if contig not in variant_counts:
                     continue
-                counts, labels = _histogram(variant_counts[contig], bins=20)
+                labels = []
+                for idx in range(len(variant_counts[contig])):
+                    start_mb = idx
+                    labels.append(f"{start_mb}-{start_mb + 1}Mb")
                 handle.write(f"<h3>{html.escape(contig)}</h3>\n")
                 handle.write(
                     _svg_bar_chart(
-                        counts,
+                        variant_counts[contig],
                         labels=labels,
-                        title=f"Variable sites per 1Mb window: {contig}",
-                        x_label="Sites per 1Mb window",
-                        y_label="Number of windows",
+                        title=f"Variable sites: {contig}",
+                        x_label="1Mb window",
+                        y_label="Site count",
                         tick_stride=max(len(labels) // 12, 1),
                     )
                 )

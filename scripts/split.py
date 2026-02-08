@@ -575,7 +575,8 @@ def main() -> None:
                 or (args.filter_multiallelic and multiple_valid_bases)
                 or has_non_acgt_nonstar
             )
-            is_inv = (info == ".")
+            # Treat ALT="." (gVCF-style invariant records) as invariant too.
+            is_inv = (info == ".") or (alt_field == ".")
 
             # Group by chrom/pos to enforce mutual exclusivity.
             if group_pos is None:
