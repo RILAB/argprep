@@ -367,13 +367,14 @@ def main() -> None:
                 return
             has_inv = any(r["is_inv"] for r in records)
             has_filtered = any(r["is_filtered"] for r in records)
+            has_missing_gt = any(r["has_missing_gt"] for r in records)
             if has_inv:
                 for r in records:
                     f_inv.write(r["line"] + "\n")
                     inv_bp += 1
                 records.clear()
                 return
-            if has_filtered:
+            if has_filtered or has_missing_gt:
                 for r in records:
                     f_filt.write(r["line"] + "\n")
                     filtered_bp += 1
@@ -519,7 +520,7 @@ def main() -> None:
             info = cols[7]
 
             # ============================================================
-            # 1) .inv (highest priority): INFO == '.' OR contains END=
+            # 1) .inv (highest priority): ALT="." (reference) OR contains END=
             # If END= exists, expand across POS..END inclusive.
             # ============================================================
             end_val = extract_end(info)
@@ -575,9 +576,8 @@ def main() -> None:
                 or (args.filter_multiallelic and multiple_valid_bases)
                 or has_non_acgt_nonstar
             )
-            # Treat ALT="." (gVCF-style invariant records) as invariant only if GT is called.
-            gt = cols[9].split(":", 1)[0] if len(cols) > 9 else "."
-            is_inv = (info == ".") or (alt_field == "." and gt != ".")
+            # Treat ALT="." (gVCF-style invariant records) as invariant.
+            is_inv = (alt_field == ".")
 
             # Group by chrom/pos to enforce mutual exclusivity.
             if group_pos is None:
@@ -587,12 +587,15 @@ def main() -> None:
                 flush_group(group)
                 group_chrom = chrom
                 group_pos = int(cols[1])
+            gts = [c.split(":", 1)[0] for c in cols[9:]] if len(cols) > 9 else ["."]
+            has_missing_gt = any(gt == "." for gt in gts)
             group.append(
                 {
                     "line": line,
                     "cols": cols,
                     "is_inv": is_inv,
                     "is_filtered": is_filtered,
+                    "has_missing_gt": has_missing_gt,
                 }
             )
 

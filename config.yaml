@@ -13,7 +13,7 @@ results_dir: results
 # Parameters for Tassel maf to gvcf (mostly safe to ignore)
 sample_suffix: _anchorwave
 fill_gaps: false
-outputJustGT: true
+outputJustGT: false
 
 # Optional for split.py
 # depth cutoff used to classify sites ("null" defaults to number of MAF files)

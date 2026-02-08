@@ -980,6 +980,7 @@ if VT_NORMALIZE:
               -O "{output.gvcf}" \
               -L "{wildcards.contig}" \
               --include-non-variant-sites \
+              --call-genotypes \
               --sample-ploidy {PLOIDY}
             """
 else:
@@ -1021,6 +1022,7 @@ else:
               -O "{output.gvcf}" \
               -L "{wildcards.contig}" \
               --include-non-variant-sites \
+              --call-genotypes \
               --sample-ploidy {PLOIDY}
             """
 

@@ -5,6 +5,10 @@ from pathlib import Path
 import pytest
 
 
+def _conda_exe() -> str:
+    return os.environ.get("CONDA_EXE") or "conda"
+
+
 def _run(cmd, cwd):
     subprocess.run(cmd, cwd=cwd, check=True)
 
@@ -18,7 +22,7 @@ def _require_conda_tools(env: str, *tools: str):
     missing = []
     for tool in tools:
         proc = subprocess.run(
-            ["conda", "run", "-n", env, tool, "--version"],
+            [_conda_exe(), "run", "-n", env, tool, "--version"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -34,7 +38,7 @@ def test_snakemake_summary():
     summary_target = str(Path.cwd() / "results" / "summary.html")
     _run(
         [
-            "conda",
+            _conda_exe(),
             "run",
             "-n",
             "argprep",
