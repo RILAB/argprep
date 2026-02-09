@@ -35,7 +35,7 @@ ploidy: 1
 
 # Optional: dropSV.py cutoff for large indels. 
 # Recommended to set higher (e.g. 10000000) for complex genomes. This requires more memory.
-# drop_cutoff: 9101264
+drop_cutoff: 4000
 
 # Optional: split.py / filt_to_bed.py switches. 
 # Setting "no_merge" to false may be useful for inspecting genomes, but will likely break the rest of the pipeline.
@@ -44,8 +44,8 @@ bgzip_output: false
 no_merge: false
 
 # Optional: GenomicsDBImport tuning (buffer/segment sizes)
-# genomicsdb_vcf_buffer_size: 1048576
-# genomicsdb_segment_size: 1048576
+genomicsdb_vcf_buffer_size: 10485760
+genomicsdb_segment_size: 10485760
 
 # Optional: max concurrent tasks for scripts/maf_to_gvcf.sh SLURM array
 # maf_to_gvcf_array_max_jobs: 4
@@ -63,7 +63,7 @@ slurm_partition: high
 # maf_to_gvcf_time: "24:00:00"
 # merge_contig_threads: 2
 # merge_contig_time: "48:00:00"
-merge_contig_mem_mb: 256000
+# merge_contig_mem_mb: 256000
 
 # Optional: normalize merged gVCFs with vt after GenotypeGVCFs
 # vt_normalize: false

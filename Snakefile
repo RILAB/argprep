@@ -369,6 +369,96 @@ rule summary_report:
             except OSError:
                 pass
 
+        def _svg_scatter_plot(
+            xs: list[int],
+            ys: list[int],
+            width: int = 900,
+            height: int = 240,
+            x_label: str | None = None,
+            y_label: str | None = None,
+        ) -> str:
+            if not xs or not ys or len(xs) != len(ys):
+                return "<p>No data available.</p>"
+            margin = {"left": 70, "right": 20, "top": 30, "bottom": 50}
+            plot_w = width - margin["left"] - margin["right"]
+            plot_h = height - margin["top"] - margin["bottom"]
+            x_min = min(xs)
+            x_max = max(xs)
+            y_min = 0
+            y_max = max(ys)
+            if x_max == x_min:
+                x_max = x_min + 1
+            if y_max == y_min:
+                y_max = y_min + 1
+
+            def x_scale(x_val: int) -> float:
+                return margin["left"] + (x_val - x_min) / (x_max - x_min) * plot_w
+
+            def y_scale(y_val: int) -> float:
+                return margin["top"] + plot_h - (y_val - y_min) / (y_max - y_min) * plot_h
+
+            parts = [
+                f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+                'xmlns="http://www.w3.org/2000/svg" role="img">',
+                '<rect width="100%" height="100%" fill="white"/>',
+            ]
+            if y_label:
+                parts.append(
+                    f'<text x="16" y="{height/2}" text-anchor="middle" '
+                    f'font-size="12" font-family="sans-serif" '
+                    f'transform="rotate(-90 16 {height/2})">{html.escape(y_label)}</text>'
+                )
+            if x_label:
+                parts.append(
+                    f'<text x="{width/2}" y="{height-8}" text-anchor="middle" '
+                    f'font-size="12" font-family="sans-serif">{html.escape(x_label)}</text>'
+                )
+
+            x0 = margin["left"]
+            y0 = margin["top"] + plot_h
+            parts.append(
+                f'<line x1="{x0}" y1="{y0}" x2="{x0 + plot_w}" y2="{y0}" '
+                'stroke="#333" stroke-width="1"/>'
+            )
+            parts.append(
+                f'<line x1="{x0}" y1="{margin["top"]}" x2="{x0}" y2="{y0}" '
+                'stroke="#333" stroke-width="1"/>'
+            )
+            # Y ticks
+            for i in range(5):
+                frac = i / 4
+                y = y0 - frac * plot_h
+                val = int(round(y_min + frac * (y_max - y_min)))
+                parts.append(
+                    f'<line x1="{x0 - 4}" y1="{y:.2f}" x2="{x0}" y2="{y:.2f}" '
+                    'stroke="#333" stroke-width="1"/>'
+                )
+                parts.append(
+                    f'<text x="{x0 - 8}" y="{y + 4:.2f}" text-anchor="end" '
+                    f'font-size="10" font-family="sans-serif">{val:,}</text>'
+                )
+            # X ticks
+            for i in range(5):
+                frac = i / 4
+                x = x0 + frac * plot_w
+                val = int(round(x_min + frac * (x_max - x_min)))
+                parts.append(
+                    f'<line x1="{x:.2f}" y1="{y0}" x2="{x:.2f}" y2="{y0 + 4}" '
+                    'stroke="#333" stroke-width="1"/>'
+                )
+                parts.append(
+                    f'<text x="{x:.2f}" y="{y0 + 16}" text-anchor="middle" '
+                    f'font-size="10" font-family="sans-serif">{val:,}</text>'
+                )
+
+            for x_val, y_val in zip(xs, ys):
+                parts.append(
+                    f'<circle cx="{x_scale(x_val):.2f}" cy="{y_scale(y_val):.2f}" '
+                    'r="2.5" fill="#4C78A8" />'
+                )
+            parts.append("</svg>")
+            return "\n".join(parts)
+
         def _svg_bar_chart(
             values: list[int],
             labels: list[str] | None = None,
@@ -411,7 +501,6 @@ rule summary_report:
                     f'font-size="12" font-family="sans-serif">{html.escape(x_label)}</text>'
                 )
 
-            # Axes
             x0 = margin["left"]
             y0 = margin["top"] + plot_h
             parts.append(
@@ -422,7 +511,6 @@ rule summary_report:
                 f'<line x1="{x0}" y1="{margin["top"]}" x2="{x0}" y2="{y0}" '
                 'stroke="#333" stroke-width="1"/>'
             )
-            # Y-axis ticks
             for i in range(5):
                 frac = i / 4
                 y = y0 - frac * plot_h
@@ -621,68 +709,9 @@ rule summary_report:
                 "with scikit-allel.</em></p>\n"
             )
 
-            handle.write("<h2>Dropped indel sizes</h2>\n")
-            bin_edges = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000]
-            bin_labels = [
-                "1-9",
-                "10-99",
-                "100-999",
-                "1,000-9,999",
-                "10,000-99,999",
-                "100,000-999,999",
-                "1,000,000-9,999,999",
-                ">=10,000,000",
-            ]
-            bin_counts = [0 for _ in bin_labels]
-            total_indels = 0
-            max_size = None
-            try:
-                with open(input.dropped, "r", encoding="utf-8") as bed_handle:
-                    for line in bed_handle:
-                        if not line.strip():
-                            continue
-                        parts = line.rstrip("\n").split("\t")
-                        if len(parts) < 3:
-                            continue
-                        try:
-                            start = int(parts[1])
-                            end = int(parts[2])
-                        except ValueError:
-                            continue
-                        size = max(end - start, 0)
-                        if size == 0:
-                            continue
-                        total_indels += 1
-                        if max_size is None or size > max_size:
-                            max_size = size
-                        placed = False
-                        for idx, edge in enumerate(bin_edges):
-                            if size < edge:
-                                bin_counts[idx] += 1
-                                placed = True
-                                break
-                        if not placed:
-                            bin_counts[-1] += 1
-            except OSError as exc:
-                handle.write(f"<p>Failed to read dropped indel BED: {html.escape(str(exc))}</p>\n")
-            else:
-                handle.write(f"<p>Total dropped indel intervals: {total_indels}</p>\n")
-                if max_size is not None:
-                    handle.write(f"<p>Max dropped indel size (bp): {max_size:,}</p>\n")
-                handle.write(
-                    _svg_bar_chart(
-                        bin_counts,
-                        labels=bin_labels,
-                        title="Dropped indel size histogram",
-                        x_label="Indel size (bp)",
-                        y_label="Count",
-                        tick_stride=1,
-                    )
-                )
-
-            handle.write("<h2>Filtered sites per 1Mb window</h2>\n")
+            handle.write("<h2>Site density (100kb windows)</h2>\n")
             contig_lengths = _read_fai_lengths(REF_FAI)
-            window = 1_000_000
+            window = 100_000
             filtered_counts: dict[str, list[int]] = {}
             inv_counts: dict[str, list[int]] = {}
             variant_counts: dict[str, list[int]] = {}
@@ -705,26 +734,6 @@ rule summary_report:
                         f"{html.escape(str(exc))}</p>\n"
                     )
 
-            for contig in contig_names:
-                if contig not in filtered_counts:
-                    continue
-                labels = []
-                for idx in range(len(filtered_counts[contig])):
-                    start_mb = idx
-                    labels.append(f"{start_mb}-{start_mb + 1}Mb")
-                handle.write(f"<h3>{html.escape(contig)}</h3>\n")
-                handle.write(
-                    _svg_bar_chart(
-                        filtered_counts[contig],
-                        labels=labels,
-                        title=f"Filtered sites (bed bp): {contig}",
-                        x_label="1Mb window",
-                        y_label="Site count",
-                        tick_stride=max(len(labels) // 12, 1),
-                    )
-                )
-
-            handle.write("<h2>Invariant sites per 1Mb window</h2>\n")
             # Prefer invariant BED if present; fallback to .inv VCF counts.
             for contig in contig_names:
                 if contig not in inv_counts:
@@ -760,26 +769,6 @@ rule summary_report:
                         f"{html.escape(str(exc))}</p>\n"
                     )
 
-            for contig in contig_names:
-                if contig not in inv_counts:
-                    continue
-                labels = []
-                for idx in range(len(inv_counts[contig])):
-                    start_mb = idx
-                    labels.append(f"{start_mb}-{start_mb + 1}Mb")
-                handle.write(f"<h3>{html.escape(contig)}</h3>\n")
-                handle.write(
-                    _svg_bar_chart(
-                        inv_counts[contig],
-                        labels=labels,
-                        title=f"Invariant sites: {contig}",
-                        x_label="1Mb window",
-                        y_label="Site count",
-                        tick_stride=max(len(labels) // 12, 1),
-                    )
-                )
-
-            handle.write("<h2>Variable sites per 1Mb window</h2>\n")
             for clean_path in input.cleans:
                 try:
                     with _open_text(clean_path) as f_in:
@@ -807,22 +796,44 @@ rule summary_report:
                         f"{html.escape(str(exc))}</p>\n"
                     )
 
+            handle.write("<h2>Summary Plots</h2>\n")
             for contig in contig_names:
-                if contig not in variant_counts:
+                if contig not in filtered_counts or contig not in inv_counts or contig not in variant_counts:
                     continue
-                labels = []
-                for idx in range(len(variant_counts[contig])):
-                    start_mb = idx
-                    labels.append(f"{start_mb}-{start_mb + 1}Mb")
+                length = contig_lengths.get(contig, 0)
+                if length <= 0:
+                    continue
+                midpoints = []
+                for idx in range(len(filtered_counts[contig])):
+                    start = idx * window
+                    end = min(start + window, length)
+                    midpoints.append(start + (end - start) // 2)
                 handle.write(f"<h3>{html.escape(contig)}</h3>\n")
+                handle.write(f"<h4>Dropped + filtered bp for contig {html.escape(contig)}</h4>\n")
                 handle.write(
-                    _svg_bar_chart(
-                        variant_counts[contig],
-                        labels=labels,
-                        title=f"Variable sites: {contig}",
-                        x_label="1Mb window",
+                    _svg_scatter_plot(
+                        midpoints,
+                        filtered_counts[contig],
+                        x_label="Window midpoint (bp)",
+                        y_label="Base pairs",
+                    )
+                )
+                handle.write(f"<h4>Invariant sites for contig {html.escape(contig)}</h4>\n")
+                handle.write(
+                    _svg_scatter_plot(
+                        midpoints,
+                        inv_counts[contig],
+                        x_label="Window midpoint (bp)",
                         y_label="Site count",
-                        tick_stride=max(len(labels) // 12, 1),
+                    )
+                )
+                handle.write(f"<h4>Variant sites for contig {html.escape(contig)}</h4>\n")
+                handle.write(
+                    _svg_scatter_plot(
+                        midpoints,
+                        variant_counts[contig],
+                        x_label="Window midpoint (bp)",
+                        y_label="Site count",
                     )
                 )
 
