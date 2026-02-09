@@ -49,7 +49,12 @@ def _count_records(path: Path) -> int:
     with subprocess.Popen(_conda_cmd("bcftools", "view", "-H", str(path)), stdout=subprocess.PIPE, text=True) as proc:
         assert proc.stdout is not None
         for _ in proc.stdout:
-            count += 1
+            line = _.rstrip("\n")
+            if not line:
+                continue
+            # Only count true VCF records (tab-delimited with standard columns).
+            if len(line.split("\t")) >= 8:
+                count += 1
     return count
 
 

@@ -30,7 +30,6 @@ Edit `config.yaml` to point at your MAF directory and reference FASTA. At minimu
 
 - `maf_dir`: directory containing `*.maf` or `*.maf.gz`
 - `reference_fasta`: reference FASTA path (plain `.fa/.fasta` or bgzipped `.fa.gz`)
-- `depth`: retained for CLI compatibility but ignored by `split.py` (no depth filtering)
 
 If your reference FASTA does **not** have an index (`.fai`), either create one (`samtools faidx`) or set `contigs:` explicitly in `config.yaml`.
 
