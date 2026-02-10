@@ -284,6 +284,33 @@ def main() -> None:
             end = end_val
             by_chrom.setdefault(chrom, []).append((start, end))
 
+    filtered_chroms: List[str] = []
+    if by_chrom:
+        filtered_chroms = sorted(by_chrom.keys())
+    if len(filtered_chroms) > 1:
+        sys.stderr.write(
+            f"ERROR: filtered VCF has multiple chromosomes: {', '.join(filtered_chroms)}\n"
+        )
+        sys.exit(1)
+    target_chrom = filtered_chroms[0] if filtered_chroms else None
+
+    # If filtered is empty, try to infer target from other inputs.
+    if target_chrom is None and os.path.isfile(inv_path):
+        target_chrom = first_chrom_from_vcf(inv_path)
+    clean_path = prefix + ".clean"
+    clean_gz = clean_path + ".gz"
+    if os.path.isfile(clean_gz):
+        clean_path = clean_gz
+    if target_chrom is None and os.path.isfile(clean_path):
+        target_chrom = first_chrom_from_vcf(clean_path)
+    if target_chrom is None and os.path.isfile(missing_bed):
+        target_chrom = first_chrom_from_bed(missing_bed)
+
+    if target_chrom is None:
+        sys.stderr.write(
+            "WARNING: unable to determine target chromosome; writing all intervals.\n"
+        )
+
     # Add dropped-indel and missing-position masks.
     read_bed_intervals(dropped_bed, by_chrom)
     read_bed_intervals(missing_bed, by_chrom)
@@ -292,18 +319,16 @@ def main() -> None:
     subtract_by_chrom: Dict[str, List[Tuple[int, int]]] = {}
     if os.path.isfile(inv_path):
         read_vcf_intervals(inv_path, subtract_by_chrom)
-    clean_path = prefix + ".clean"
-    clean_gz = clean_path + ".gz"
-    if os.path.isfile(clean_gz):
-        clean_path = clean_gz
     if os.path.isfile(clean_path):
         read_vcf_intervals(clean_path, subtract_by_chrom)
 
+    subtract_by_chrom = filter_intervals(subtract_by_chrom, target_chrom)
     for chrom in subtract_by_chrom:
         intervals = subtract_by_chrom[chrom]
         intervals.sort(key=lambda x: (x[0], x[1]))
         subtract_by_chrom[chrom] = merge_intervals(intervals)
 
+    by_chrom = filter_intervals(by_chrom, target_chrom)
     for chrom in by_chrom:
         intervals = by_chrom[chrom]
         if not intervals:
@@ -321,6 +346,39 @@ def main() -> None:
             output_intervals = intervals if args.no_merge else merge_intervals(intervals)
             for s, e in output_intervals:
                 fout.write(f"{chrom}\t{s}\t{e}\n")
+
+
+def first_chrom_from_vcf(path: str) -> str | None:
+    with open_maybe_gzip(path, "rt") as fin:
+        for raw in fin:
+            if not raw or raw.startswith("#"):
+                continue
+            cols = raw.rstrip("\n").split("\t")
+            if len(cols) >= 1:
+                return cols[0]
+    return None
+
+
+def first_chrom_from_bed(path: str) -> str | None:
+    with open(path, "rt", encoding="utf-8") as fin:
+        for raw in fin:
+            if not raw or raw.startswith("#"):
+                continue
+            cols = raw.rstrip("\n").split("\t")
+            if len(cols) >= 1:
+                return cols[0]
+    return None
+
+
+def filter_intervals(
+    by_chrom: Dict[str, List[Tuple[int, int]]], target: str | None
+) -> Dict[str, List[Tuple[int, int]]]:
+    if target is None:
+        return by_chrom
+    filtered: Dict[str, List[Tuple[int, int]]] = {}
+    if target in by_chrom:
+        filtered[target] = by_chrom[target]
+    return filtered
 
 
 if __name__ == "__main__":
