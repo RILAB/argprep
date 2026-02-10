@@ -186,21 +186,6 @@ def extract_end(info: str) -> int | None:
     return None
 
 
-def sum_merged_bp(by_chrom: Dict[str, List[Tuple[int, int]]]) -> int:
-    """
-    Merge intervals and return the total covered basepairs.
-    """
-    total = 0
-    for chrom in by_chrom:
-        intervals = by_chrom[chrom]
-        if not intervals:
-            continue
-        intervals.sort(key=lambda x: (x[0], x[1]))
-        merged = merge_intervals(intervals)
-        total += sum(e - s for s, e in merged)
-    return total
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Convert a .filtered VCF to a BED of bp positions.")
     ap.add_argument(
@@ -211,11 +196,6 @@ def main() -> None:
         "--dropped-bed",
         default=None,
         help="Optional path to dropped_indels.bed (overrides the default cleangVCF/dropped_indels.bed).",
-    )
-    ap.add_argument(
-        "--no-merge",
-        action="store_true",
-        help="Do not sort/merge overlapping or adjacent intervals.",
     )
     args = ap.parse_args()
 
@@ -343,7 +323,7 @@ def main() -> None:
         for chrom in sorted(by_chrom.keys()):
             intervals = by_chrom[chrom]
             intervals.sort(key=lambda x: (x[0], x[1]))
-            output_intervals = intervals if args.no_merge else merge_intervals(intervals)
+            output_intervals = merge_intervals(intervals)
             for s, e in output_intervals:
                 fout.write(f"{chrom}\t{s}\t{e}\n")
 

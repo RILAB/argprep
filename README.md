@@ -57,7 +57,7 @@ Common options:
 - `-j <N>`: number of parallel jobs
 - `--rerun-incomplete`: clean up partial outputs
 - `--printshellcmds`: show executed commands
-- `--keep-temp`: keep temporary intermediates (see Notes)
+- `--notemp`: keep temporary intermediates (see Notes)
 
 ## Workflow Outputs
 
@@ -84,11 +84,10 @@ By default the workflow uses these locations (override in `config.yaml`):
 - `scripts/split.py` supports `--filter-multiallelic` and `--bgzip-output` (toggle via `config.yaml`).
 - `scripts/filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
 - `make_accessibility` builds a per-contig accessibility array from the union of `combined.<contig>.clean` and `combined.<contig>.inv` using the reference `.fai` to size the array. The output is a compressed NumPy archive containing a boolean array named `mask`, intended for scikit-allel statistics.
-- `no_merge: true` is for troubleshooting per-sample filtered regions only; it will likely break downstream steps because the combined mask bed is not merged.
 - Warning: The workflow defaults to haploid genotyping (`ploidy: 1`) and has not been validated on diploid genome assemblies.
-- Optional: enable `vt_normalize: true` in `config.yaml` to normalize merged gVCFs with `vt normalize` after `GenotypeGVCFs`.
+- Optional: enable `vt_normalize: true` in `config.yaml` to normalize merged gVCFs with `vt normalize` after `SelectVariants`.
 - If GenomicsDBImport fails with a buffer-size error, increase `genomicsdb_vcf_buffer_size` and `genomicsdb_segment_size` in `config.yaml` (set them above your longest gVCF line length).
-- Large intermediate files are marked as temporary and removed after a successful run (per-sample gVCFs, cleaned gVCFs, per-contig split gVCFs, and the GenomicsDB workspace). Use `snakemake --keep-temp` if you want to preserve them for debugging or reruns.
+- Large intermediate files are marked as temporary and removed after a successful run (per-sample gVCFs, cleaned gVCFs, per-contig split gVCFs, and the GenomicsDB workspace). Use `snakemake --notemp` if you want to preserve them for debugging or reruns.
 - Resource knobs (memory/threads/time) and GenomicsDB buffer sizes are configurable in `config.yaml` (e.g., `merge_contig_mem_mb`, `maf_to_gvcf_*`, `genomicsdb_*`).
 - To cap the SLURM array concurrency for `scripts/maf_to_gvcf.sh`, set `maf_to_gvcf_array_max_jobs` in `config.yaml` (default 4).
 
@@ -97,10 +96,13 @@ By default the workflow uses these locations (override in `config.yaml`):
 - Added HTML summary report with embedded SVG histograms and expanded output details.
 - Split logic tightened: clean sites now require all samples called; missing GTs are routed to filtered.
 - Invariant/filtered/clean outputs are enforced as mutually exclusive per position; filtered BED spans now respect END/REF lengths and subtract inv/clean.
-- GenotypeGVCFs now runs with genotype calling and non‑variant output enabled; TASSEL `outputJustGT` default set to `false` to retain likelihoods for calling.
+- Merged gVCFs are produced via GATK SelectVariants with genotype calling; TASSEL `outputJustGT` default set to `false` to retain likelihoods for calling.
 - Added accessibility mask generation (`combined.<contig>.accessible.npz`) for scikit‑allel workflows.
 - New/expanded validation and tests: split coverage checks, filtered‑bed tests, integration tests gated by `RUN_INTEGRATION=1`.
-- Example data regenerated via msprime with indels and AnchorWave‑style MAF formatting.
+- Example data regenerated via msprime with indels and missing data and AnchorWave‑style MAF formatting.
+- `check_split_coverage.py` now reports overlap intervals with file names to aid debugging.
+- `filt_to_bed.py` filters masks to the target contig, preventing cross‑contig lines in `combined.<contig>.filtered.bed`.
+- SLURM default resources now read `default_*` from `config.yaml` instead of hardcoded profile values.
 
 ## Downstream Uses
 

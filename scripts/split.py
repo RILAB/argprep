@@ -47,7 +47,6 @@ def build_provenance_headers(
     out_inv: str,
     out_filt: str,
     out_clean: str,
-    depth: int,
     bgzip_output: bool,
 ) -> list[str]:
     """
@@ -71,7 +70,6 @@ def build_provenance_headers(
         f"##output.inv={out_inv}",
         f"##output.filtered={out_filt}",
         f"##output.clean={out_clean}",
-        f"##parameters.depth_threshold={depth}",
         f"##parameters.bgzip_output={'true' if bgzip_output else 'false'}",
     ]
     lines.append(
@@ -279,12 +277,6 @@ def main() -> None:
         help="Input VCF (.vcf or .vcf.gz)"
     )
     ap.add_argument(
-        "--depth",
-        type=int,
-        required=True,
-        help="Depth threshold (ignored by this script)."
-    )
-    ap.add_argument(
         "--out-prefix",
         default=None,
         help="Output prefix (default: input filename without .vcf/.vcf.gz)"
@@ -302,7 +294,6 @@ def main() -> None:
     args = ap.parse_args()
 
     in_path = args.vcf
-    depth = args.depth
     contig_lengths = load_fai_lengths(args.fai) if args.fai else {}
 
     # ---------------- Output prefix logic ----------------
@@ -349,7 +340,6 @@ def main() -> None:
             out_inv=out_inv_final,
             out_filt=out_filt_final,
             out_clean=out_clean_final,
-            depth=depth,
             bgzip_output=bgzip_output,
         )
     

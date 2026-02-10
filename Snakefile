@@ -24,7 +24,6 @@ OUTPUT_JUST_GT = bool(config.get("outputJustGT", False))
 DROP_CUTOFF = config.get("drop_cutoff", "")
 FILTER_MULTIALLELIC = bool(config.get("filter_multiallelic", False))
 BGZIP_OUTPUT = bool(config.get("bgzip_output", False))
-NO_MERGE = bool(config.get("no_merge", False))
 GENOMICSDB_VCF_BUFFER_SIZE = int(config.get("genomicsdb_vcf_buffer_size", 1048576))
 GENOMICSDB_SEGMENT_SIZE = int(config.get("genomicsdb_segment_size", 1048576))
 MAF_TO_GVCF_THREADS = int(config.get("maf_to_gvcf_threads", 2))
@@ -40,11 +39,7 @@ DEFAULT_JAVA_MEM_MB = max(256, int(DEFAULT_MEM_MB * 0.9))
 PLOIDY = int(config.get("ploidy", 2))
 VT_NORMALIZE = bool(config.get("vt_normalize", False))
 VT_PATH = str(config.get("vt_path", "vt"))
-MERGED_GENOTYPER = str(config.get("merged_genotyper", "genotypegvcf")).lower()
-if MERGED_GENOTYPER not in {"genotypegvcf", "selectvariants"}:
-    raise ValueError(
-        f"merged_genotyper must be 'genotypegvcf' or 'selectvariants', got {MERGED_GENOTYPER!r}"
-    )
+MERGED_GENOTYPER = "selectvariants"
 
 REF_BASE = ORIG_REF_FASTA.name
 if REF_BASE.endswith(".gz"):
@@ -198,8 +193,6 @@ CONTIGS = _read_contigs()
 
 GVCF_BASES = [f"{sample}To{REF_BASE}" for sample in SAMPLES]
 
-# Depth is ignored by split.py but required by its CLI.
-DEPTH = 1
 
 
 def _gvcf_out(base):
@@ -906,23 +899,12 @@ if VT_NORMALIZE:
               -L "{wildcards.contig}" \
               --genomicsdb-vcf-buffer-size {params.vcf_buffer_size} \
               --genomicsdb-segment-size {params.segment_size}
-            if [ "{MERGED_GENOTYPER}" = "selectvariants" ]; then
-              gatk --java-options "-Xmx{MERGE_CONTIG_JAVA_MEM_MB}m -Xms{MERGE_CONTIG_JAVA_MEM_MB}m" SelectVariants \
-                -R "{input.ref}" \
-                -V "gendb://{output.workspace}" \
-                -O "{output.gvcf}" \
-                -L "{wildcards.contig}" \
-                --call-genotypes
-            else
-              gatk --java-options "-Xmx{MERGE_CONTIG_JAVA_MEM_MB}m -Xms{MERGE_CONTIG_JAVA_MEM_MB}m" GenotypeGVCFs \
-                -R "{input.ref}" \
-                -V "gendb://{output.workspace}" \
-                -O "{output.gvcf}" \
-                -L "{wildcards.contig}" \
-                --include-non-variant-sites \
-                --call-genotypes \
-                --sample-ploidy {PLOIDY}
-            fi
+            gatk --java-options "-Xmx{MERGE_CONTIG_JAVA_MEM_MB}m -Xms{MERGE_CONTIG_JAVA_MEM_MB}m" SelectVariants \
+              -R "{input.ref}" \
+              -V "gendb://{output.workspace}" \
+              -O "{output.gvcf}" \
+              -L "{wildcards.contig}" \
+              --call-genotypes
             """
 else:
     rule merge_contig:
@@ -957,23 +939,12 @@ else:
               -L "{wildcards.contig}" \
               --genomicsdb-vcf-buffer-size {params.vcf_buffer_size} \
               --genomicsdb-segment-size {params.segment_size}
-            if [ "{MERGED_GENOTYPER}" = "selectvariants" ]; then
-              gatk --java-options "-Xmx{MERGE_CONTIG_JAVA_MEM_MB}m -Xms{MERGE_CONTIG_JAVA_MEM_MB}m" SelectVariants \
-                -R "{input.ref}" \
-                -V "gendb://{output.workspace}" \
-                -O "{output.gvcf}" \
-                -L "{wildcards.contig}" \
-                --call-genotypes
-            else
-              gatk --java-options "-Xmx{MERGE_CONTIG_JAVA_MEM_MB}m -Xms{MERGE_CONTIG_JAVA_MEM_MB}m" GenotypeGVCFs \
-                -R "{input.ref}" \
-                -V "gendb://{output.workspace}" \
-                -O "{output.gvcf}" \
-                -L "{wildcards.contig}" \
-                --include-non-variant-sites \
-                --call-genotypes \
-                --sample-ploidy {PLOIDY}
-            fi
+            gatk --java-options "-Xmx{MERGE_CONTIG_JAVA_MEM_MB}m -Xms{MERGE_CONTIG_JAVA_MEM_MB}m" SelectVariants \
+              -R "{input.ref}" \
+              -V "gendb://{output.workspace}" \
+              -O "{output.gvcf}" \
+              -L "{wildcards.contig}" \
+              --call-genotypes
             """
 
 
@@ -1008,7 +979,6 @@ rule split_gvcf:
         clean=str(RESULTS_DIR / "split" / ("combined.{contig}.clean" + SPLIT_SUFFIX)),
         missing=str(RESULTS_DIR / "split" / ("combined.{contig}.missing.bed" + SPLIT_SUFFIX)),
     params:
-        depth=DEPTH,
         filter_multiallelic=FILTER_MULTIALLELIC,
         bgzip_output=BGZIP_OUTPUT,
         out_prefix=lambda wc: str(_split_prefix(wc.contig)),
@@ -1016,7 +986,7 @@ rule split_gvcf:
         """
         set -euo pipefail
         mkdir -p "{RESULTS_DIR}/split"
-        cmd=(python "{workflow.basedir}/scripts/split.py" --depth="{params.depth}" --out-prefix "{params.out_prefix}" --fai "{input.ref_fai}")
+        cmd=(python "{workflow.basedir}/scripts/split.py" --out-prefix "{params.out_prefix}" --fai "{input.ref_fai}")
         if [ "{params.filter_multiallelic}" = "True" ]; then
           cmd+=(--filter-multiallelic)
         fi
@@ -1057,16 +1027,12 @@ rule mask_bed:
     output:
         bed=str(RESULTS_DIR / "split" / "combined.{contig}.filtered.bed"),
     params:
-        no_merge=NO_MERGE,
         prefix=lambda wc: str(_split_prefix(wc.contig)),
     shell:
         """
         set -euo pipefail
         cmd=(python "{workflow.basedir}/scripts/filt_to_bed.py" "{params.prefix}")
         cmd+=(--dropped-bed "{input.dropped}")
-        if [ "{params.no_merge}" = "True" ]; then
-          cmd+=(--no-merge)
-        fi
         "${{cmd[@]}}"
         """
 

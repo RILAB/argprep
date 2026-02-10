@@ -20,12 +20,14 @@ from typing import Dict, List, TextIO, Tuple
 
 
 def open_maybe_gzip(path: Path, mode: str) -> TextIO:
+    # Normalize IO for optional gzipped inputs.
     if str(path).endswith(".gz"):
         return gzip.open(path, mode)  # type: ignore
     return path.open(mode, encoding="utf-8")
 
 
 def extract_end(info: str) -> int | None:
+    # Parse END= from INFO, if present.
     if info == ".":
         return None
     for field in info.split(";"):
@@ -37,57 +39,8 @@ def extract_end(info: str) -> int | None:
     return None
 
 
-def sum_vcf_bp(path: Path) -> tuple[str | None, int]:
-    chrom = None
-    total = 0
-    with open_maybe_gzip(path, "rt") as fin:
-        for raw in fin:
-            if raw.startswith("#"):
-                continue
-            if not raw.strip():
-                continue
-            cols = raw.rstrip("\n").split("\t")
-            if len(cols) < 4:
-                continue
-            if chrom is None:
-                chrom = cols[0]
-            try:
-                pos = int(cols[1])
-            except ValueError:
-                continue
-            ref = cols[3]
-            info = cols[7] if len(cols) >= 8 else "."
-            end_val = extract_end(info)
-            if end_val is not None and end_val >= pos:
-                total += end_val - pos + 1
-            else:
-                total += max(len(ref), 1)
-    return chrom, total
-
-
-def sum_bed_bp(path: Path) -> tuple[str | None, int]:
-    chrom = None
-    total = 0
-    with path.open("r", encoding="utf-8") as fin:
-        for raw in fin:
-            if not raw.strip() or raw.startswith("#"):
-                continue
-            cols = raw.rstrip("\n").split("\t")
-            if len(cols) < 3:
-                continue
-            if chrom is None:
-                chrom = cols[0]
-            try:
-                start = int(cols[1])
-                end = int(cols[2])
-            except ValueError:
-                continue
-            if end > start:
-                total += end - start
-    return chrom, total
-
-
 def load_fai_length(path: Path, chrom: str) -> int:
+    # Resolve contig length from the .fai index.
     with path.open("r", encoding="utf-8") as fin:
         for raw in fin:
             if not raw.strip():
@@ -101,6 +54,7 @@ def load_fai_length(path: Path, chrom: str) -> int:
 
 
 def read_clean_inv_intervals(path: Path) -> tuple[str | None, List[Tuple[int, int]]]:
+    # Convert 1-based VCF positions to 0-based half-open intervals.
     chrom = None
     intervals: List[Tuple[int, int]] = []
     with open_maybe_gzip(path, "rt") as fin:
@@ -121,6 +75,7 @@ def read_clean_inv_intervals(path: Path) -> tuple[str | None, List[Tuple[int, in
 
 
 def read_bed_intervals(path: Path) -> tuple[str | None, List[Tuple[int, int]]]:
+    # Read BED intervals directly (already 0-based half-open).
     chrom = None
     intervals: List[Tuple[int, int]] = []
     with path.open("r", encoding="utf-8") as fin:
@@ -143,6 +98,7 @@ def read_bed_intervals(path: Path) -> tuple[str | None, List[Tuple[int, int]]]:
 
 
 def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    # Coalesce overlapping/adjacent intervals to simplify coverage math.
     if not intervals:
         return []
     intervals.sort(key=lambda x: (x[0], x[1]))
@@ -159,6 +115,7 @@ def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
 
 
 def overlap_bp(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> int:
+    # Compute total bp overlap between two interval sets.
     i = j = 0
     total = 0
     a = merge_intervals(a)
@@ -183,6 +140,7 @@ def overlap_bp(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> int:
 def overlap_intervals(
     a: List[Tuple[int, int]], b: List[Tuple[int, int]]
 ) -> List[Tuple[int, int]]:
+    # Return explicit overlap intervals for reporting.
     i = j = 0
     overlaps: List[Tuple[int, int]] = []
     a = merge_intervals(a)
@@ -215,6 +173,7 @@ def format_overlap_report(
     file_b: Path,
     max_show: int = 20,
 ) -> str:
+    # Pretty-print overlap intervals with file context for debugging.
     count = len(overlaps)
     if count == 0:
         return f"{label}: 0 overlaps"
@@ -257,6 +216,7 @@ def main() -> None:
     inv_chrom, inv_intervals = read_clean_inv_intervals(inv)
     bed_chrom, bed_intervals = read_bed_intervals(filtered_bed)
 
+    # Determine the contig name from whichever input provides one.
     chrom = clean_chrom or inv_chrom or bed_chrom
     if chrom is None:
         sys.exit("ERROR: unable to determine chromosome from inputs.")
@@ -268,6 +228,7 @@ def main() -> None:
     fai = Path(args.fai)
     chrom_len = load_fai_length(fai, chrom)
 
+    # Overlaps indicate split outputs are not mutually exclusive.
     overlap_ci = overlap_bp(clean_intervals, inv_intervals)
     overlap_cb = overlap_bp(clean_intervals, bed_intervals)
     overlap_ib = overlap_bp(inv_intervals, bed_intervals)
@@ -289,6 +250,7 @@ def main() -> None:
         ]
         sys.exit("\n".join(report_lines))
 
+    # Coverage should match the full contig length after unioning intervals.
     merged = merge_intervals(clean_intervals + inv_intervals + bed_intervals)
     total = sum(e - s for s, e in merged)
     if total != chrom_len:

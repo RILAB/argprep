@@ -9,12 +9,14 @@ import numpy as np
 
 
 def _open_text(path: Path):
+    # Handle optional gzip input for split outputs.
     if path.suffix == ".gz":
         return gzip.open(path, "rt", encoding="utf-8", errors="replace")
     return path.open("r", encoding="utf-8", errors="replace")
 
 
 def _iter_vcf_pos(path: Path):
+    # Yield 1-based positions for each non-header VCF record.
     with _open_text(path) as handle:
         for line in handle:
             if not line or line[0] == "#":
@@ -29,6 +31,7 @@ def _iter_vcf_pos(path: Path):
 
 
 def _contig_length_from_fai(fai_path: Path, contig: str) -> int:
+    # Look up contig length from reference index.
     with fai_path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
             if not line.strip():
@@ -53,8 +56,10 @@ def main() -> int:
     args = parser.parse_args()
 
     contig_len = _contig_length_from_fai(args.fai, args.contig)
+    # Boolean mask indexed by 0-based position across the contig.
     mask = np.zeros(contig_len, dtype=bool)
 
+    # Mark any position present in either clean or inv as accessible.
     for pos in _iter_vcf_pos(args.clean):
         if 1 <= pos <= contig_len:
             mask[pos - 1] = True
@@ -62,6 +67,7 @@ def main() -> int:
         if 1 <= pos <= contig_len:
             mask[pos - 1] = True
 
+    # Persist as compressed numpy archive with a single "mask" array.
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output, mask=mask)
     return 0
