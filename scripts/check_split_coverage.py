@@ -208,15 +208,23 @@ def overlap_intervals(
 
 
 def format_overlap_report(
-    chrom: str, label: str, overlaps: List[Tuple[int, int]], max_show: int = 20
+    chrom: str,
+    label: str,
+    overlaps: List[Tuple[int, int]],
+    file_a: Path,
+    file_b: Path,
+    max_show: int = 20,
 ) -> str:
     count = len(overlaps)
     if count == 0:
         return f"{label}: 0 overlaps"
     show = overlaps[:max_show]
-    lines = [f"{label}: {count} overlap intervals (showing up to {max_show})"]
+    lines = [
+        f"{label}: {count} overlap intervals (showing up to {max_show})",
+        f"  files: {file_a} vs {file_b}",
+    ]
     for start, end in show:
-        lines.append(f"  {chrom}:{start}-{end}")
+        lines.append(f"  {chrom}:{start}-{end} overlaps {label} ({file_a} vs {file_b})")
     if count > max_show:
         lines.append(f"  ... {count - max_show} more")
     return "\n".join(lines)
@@ -271,9 +279,9 @@ def main() -> None:
             f"ERROR: overlap detected for {chrom}: "
             f"clean∩inv={overlap_ci}, clean∩filtered_bed={overlap_cb}, "
             f"inv∩filtered_bed={overlap_ib}",
-            format_overlap_report(chrom, "clean∩inv", ci_intervals),
-            format_overlap_report(chrom, "clean∩filtered_bed", cb_intervals),
-            format_overlap_report(chrom, "inv∩filtered_bed", ib_intervals),
+            format_overlap_report(chrom, "clean∩inv", ci_intervals, clean, inv),
+            format_overlap_report(chrom, "clean∩filtered_bed", cb_intervals, clean, filtered_bed),
+            format_overlap_report(chrom, "inv∩filtered_bed", ib_intervals, inv, filtered_bed),
         ]
         sys.exit("\n".join(report_lines))
 
