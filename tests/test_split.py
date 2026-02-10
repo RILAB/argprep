@@ -37,8 +37,6 @@ def test_split_missing_with_fai(tmp_path: Path):
         [
             sys.executable,
             str(Path("scripts") / "split.py"),
-            "--depth",
-            "1",
             "--out-prefix",
             str(prefix),
             "--fai",
@@ -71,8 +69,6 @@ def test_singer_dp_rewrite(tmp_path: Path):
         [
             sys.executable,
             str(Path("scripts") / "split.py"),
-            "--depth",
-            "1",
             "--out-prefix",
             str(prefix),
             "--fai",
@@ -111,8 +107,6 @@ def test_split_invariant_reference_block(tmp_path: Path):
         [
             sys.executable,
             str(Path("scripts") / "split.py"),
-            "--depth",
-            "1",
             "--out-prefix",
             str(prefix),
             "--fai",
@@ -149,8 +143,6 @@ def test_split_alt_dot_requires_called_gt_for_inv(tmp_path: Path):
         [
             sys.executable,
             str(Path("scripts") / "split.py"),
-            "--depth",
-            "1",
             "--out-prefix",
             str(prefix),
             "--fai",

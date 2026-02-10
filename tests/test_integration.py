@@ -1,6 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -11,6 +12,20 @@ def _conda_exe() -> str:
 
 def _run(cmd, cwd):
     subprocess.run(cmd, cwd=cwd, check=True)
+
+
+def _config_reference_fasta(config_path: Path) -> Path | None:
+    if not config_path.exists():
+        return None
+    for raw in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("reference_fasta:"):
+            value = line.split(":", 1)[1].strip().strip('"').strip("'")
+            if value:
+                return (config_path.parent / value).resolve()
+    return None
 
 
 def _require_integration():
@@ -32,9 +47,35 @@ def _require_conda_tools(env: str, *tools: str):
         pytest.skip(f"Missing required tools in conda env {env}: {', '.join(missing)}")
 
 
-def test_snakemake_summary():
+def _is_gzip(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def test_snakemake_summary(tmp_path: Path):
     _require_integration()
     _require_conda_tools("argprep", "snakemake", "bcftools", "tabix", "bgzip", "gatk", "java")
+    repo = Path.cwd()
+    ref = _config_reference_fasta(repo / "config.yaml")
+    if ref is None or not ref.exists():
+        pytest.skip(f"Missing reference FASTA from config.yaml: {ref}")
+    maf_files = list((repo / "example_data").glob("*.maf*"))
+    if not maf_files:
+        pytest.skip("No example MAFs found under example_data/")
+    maf_dir = tmp_path / "maf"
+    maf_dir.mkdir()
+    for maf in maf_files:
+        gzipped = _is_gzip(maf)
+        if gzipped and maf.suffix != ".gz":
+            dest_name = maf.name + ".gz"
+        elif (not gzipped) and maf.name.endswith(".gz"):
+            dest_name = maf.name[: -len(".gz")]
+        else:
+            dest_name = maf.name
+        shutil.copyfile(maf, maf_dir / dest_name)
     summary_target = str(Path.cwd() / "results" / "summary.html")
     _run(
         [
@@ -52,6 +93,9 @@ def test_snakemake_summary():
             "snakemake",
             "-j",
             "2",
+            "--config",
+            f"maf_dir={maf_dir}",
+            "--",
             summary_target,
         ],
         cwd=Path.cwd(),
