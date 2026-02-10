@@ -227,6 +227,10 @@ def _split_out(base, contig):
     return GVCF_DIR / "cleangVCF" / "split_gvcf" / f"{base}.{contig}.gvcf.gz"
 
 
+def _split_sanitized_out(base, contig):
+    return GVCF_DIR / "cleangVCF" / "split_gvcf_sanitized" / f"{base}.{contig}.gvcf.gz"
+
+
 def _combined_out(contig):
     return COMBINED_DIR / f"combined.{contig}.gvcf.gz"
 
@@ -851,6 +855,31 @@ rule split_gvcf_by_contig:
         """
 
 
+rule sanitize_split_gvcf:
+    # Drop duplicate alleles/records before GenomicsDBImport.
+    input:
+        gvcf=lambda wc: str(_split_out(wc.gvcf_base, wc.contig)),
+        tbi=lambda wc: str(_split_out(wc.gvcf_base, wc.contig)) + ".tbi",
+    log:
+        str(LOG_DIR / "sanitize" / "{gvcf_base}.{contig}.log"),
+    output:
+        gvcf=temp(str(GVCF_DIR / "cleangVCF" / "split_gvcf_sanitized" / "{gvcf_base}.{contig}.gvcf.gz")),
+        tbi=temp(str(GVCF_DIR / "cleangVCF" / "split_gvcf_sanitized" / "{gvcf_base}.{contig}.gvcf.gz.tbi")),
+    shell:
+        """
+        set -euo pipefail
+        mkdir -p "{GVCF_DIR}/cleangVCF/split_gvcf_sanitized"
+        mkdir -p "{LOG_DIR}/sanitize"
+        before=$(bcftools view -H "{input.gvcf}" | wc -l | tr -d ' ')
+        bcftools norm -d both -Oz -o "{output.gvcf}" "{input.gvcf}"
+        tabix -f -p vcf "{output.gvcf}"
+        after=$(bcftools view -H "{output.gvcf}" | wc -l | tr -d ' ')
+        removed=$((before - after))
+        printf "input=%s\noutput=%s\nrecords_before=%s\nrecords_after=%s\nrecords_removed=%s\n" \
+          "{input.gvcf}" "{output.gvcf}" "$before" "$after" "$removed" > "{log}"
+        """
+
+
 if VT_NORMALIZE:
     rule merge_contig_raw:
         # Merge all samples for a contig with GenomicsDBImport + GenotypeGVCFs.
@@ -859,8 +888,8 @@ if VT_NORMALIZE:
             mem_mb=MERGE_CONTIG_MEM_MB,
             time=MERGE_CONTIG_TIME,
         input:
-            gvcfs=lambda wc: [str(_split_out(b, wc.contig)) for b in GVCF_BASES],
-            tbis=lambda wc: [str(_split_out(b, wc.contig)) + ".tbi" for b in GVCF_BASES],
+            gvcfs=lambda wc: [str(_split_sanitized_out(b, wc.contig)) for b in GVCF_BASES],
+            tbis=lambda wc: [str(_split_sanitized_out(b, wc.contig)) + ".tbi" for b in GVCF_BASES],
             ref=str(REF_FASTA_GATK),
             fai=REF_FAI,
             dict=REF_DICT,
@@ -870,7 +899,7 @@ if VT_NORMALIZE:
             workspace=temp(directory(str(RESULTS_DIR / "genomicsdb" / "{contig}"))),
         params:
             gvcf_args=lambda wc: " ".join(
-                f"-V {str(_split_out(b, wc.contig))}" for b in GVCF_BASES
+                f"-V {str(_split_sanitized_out(b, wc.contig))}" for b in GVCF_BASES
             ),
             vcf_buffer_size=GENOMICSDB_VCF_BUFFER_SIZE,
             segment_size=GENOMICSDB_SEGMENT_SIZE,
@@ -910,8 +939,8 @@ else:
             mem_mb=MERGE_CONTIG_MEM_MB,
             time=MERGE_CONTIG_TIME,
         input:
-            gvcfs=lambda wc: [str(_split_out(b, wc.contig)) for b in GVCF_BASES],
-            tbis=lambda wc: [str(_split_out(b, wc.contig)) + ".tbi" for b in GVCF_BASES],
+            gvcfs=lambda wc: [str(_split_sanitized_out(b, wc.contig)) for b in GVCF_BASES],
+            tbis=lambda wc: [str(_split_sanitized_out(b, wc.contig)) + ".tbi" for b in GVCF_BASES],
             ref=str(REF_FASTA_GATK),
             fai=REF_FAI,
             dict=REF_DICT,
@@ -921,7 +950,7 @@ else:
             workspace=temp(directory(str(RESULTS_DIR / "genomicsdb" / "{contig}"))),
         params:
             gvcf_args=lambda wc: " ".join(
-                f"-V {str(_split_out(b, wc.contig))}" for b in GVCF_BASES
+                f"-V {str(_split_sanitized_out(b, wc.contig))}" for b in GVCF_BASES
             ),
             vcf_buffer_size=GENOMICSDB_VCF_BUFFER_SIZE,
             segment_size=GENOMICSDB_SEGMENT_SIZE,
