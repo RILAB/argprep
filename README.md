@@ -1,6 +1,6 @@
 # ARG Pipeline (Snakemake)
 
-This repository provides a Snakemake workflow that converts AnchorWave MAFs into per-contig merged gVCFs, splits them into clean/filtered/invariant sets, and produces mask bedfiles for downstream ARG inference.
+This repository provides a Snakemake workflow that converts AnchorWave MAFs into per-contig merged gVCFs, splits them into clean/filtered/invariant sets, and produces mask bedfiles for downstream ARG inference (see `logic.md` for details).
 
 ## Requirements
 
@@ -82,7 +82,6 @@ By default the workflow uses these locations (override in `config.yaml`):
 - All gzipped outputs in this pipeline use bgzip (required for `tabix`).
 - `scripts/dropSV.py` removes indels larger than `drop_cutoff` (if set in `config.yaml`).
 - `scripts/split.py` supports `--filter-multiallelic` and `--bgzip-output` (toggle via `config.yaml`).
-- See `logic.md` for detailed site-routing logic and worked examples (clean/filtered/invariant/missing/large-indel behavior).
 - `scripts/filt_to_bed.py` merges `<prefix>.filtered`, `<prefix>.missing.bed`, and `dropped_indels.bed` into a final mask bed.
 - `make_accessibility` builds a per-contig accessibility array from the union of `combined.<contig>.clean` and `combined.<contig>.inv` using the reference `.fai` to size the array. The output is a compressed NumPy archive containing a boolean array named `mask`, intended for scikit-allel statistics.
 - Warning: The workflow defaults to haploid genotyping (`ploidy: 1`) and has not been validated on diploid genome assemblies.

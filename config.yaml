@@ -61,5 +61,3 @@ slurm_partition: high
 # Optional: normalize merged gVCFs with vt after GenotypeGVCFs
 # vt_normalize: false
 # vt_path: vt
-
-## Merged gVCFs are generated via GATK SelectVariants.
