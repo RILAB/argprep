@@ -351,7 +351,7 @@ def main() -> None:
                 if singer_reformat is None:
                     singer_reformat = needs_singer_reformat(r["cols"][8], r["cols"][9:])
                     if singer_reformat:
-                        sys.stderr.write("Reformatting .clean output for SINGER based on AD fields.\n")
+                        sys.stderr.write("Reformatting .clean output for SINGER by removing <NON_REF> alleles.\n")
                 if singer_reformat:
                     f_clean.write(format_for_singer(r["cols"]))
                 else:
