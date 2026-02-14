@@ -1,0 +1,17 @@
+name: argprep
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - htslib
+  - samtools
+  - bcftools
+  - vt
+  - gatk4
+  - picard
+  - python=3.11
+  - numpy
+  - snakemake>=8.0.0
+  - snakemake-executor-plugin-cluster-generic
+  - pytest

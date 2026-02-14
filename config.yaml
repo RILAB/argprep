@@ -1,0 +1,66 @@
+# Paths
+maf_dir: example_data
+reference_fasta: example_data/ref.fa
+
+# Output locations
+gvcf_dir: gvcf
+results_dir: results
+
+# Tools
+# tassel_dir defaults to "tassel-5-standalone" if omitted
+# tassel_dir: /path/to/tassel-5-standalone
+
+# Parameters for Tassel maf to gvcf (mostly safe to ignore)
+sample_suffix: _anchorwave
+fill_gaps: false
+outputJustGT: false
+
+# Optional: list of contigs to process (one per line). If specified, the workflow will only run on these contigs. Contig names should match those in reference_fasta.
+# If omitted (comment out "contigs" line), the workflow will run all contigs but expects reference_fasta.fai to exist.
+contigs:
+  - 1
+
+# Ploidy for GATK GenotypeGVCFs (workflow defaults to haploid; not validated for diploid assemblies)
+ploidy: 1
+
+# Optional: override sample list (default is all *.maf in maf_dir)
+# samples:
+#   - sampleA
+#   - sampleB
+
+# Optional: dropSV.py cutoff for large indels. 
+# Recommended to set higher (e.g. 10000000) for complex genomes. This requires more memory.
+drop_cutoff: 4000
+
+# Optional: split.py switches. 
+filter_multiallelic: false
+bgzip_output: false
+
+# Optional: GenomicsDBImport tuning (buffer/segment sizes)
+genomicsdb_vcf_buffer_size: 10485760
+genomicsdb_segment_size: 10485760
+
+# Optional: max concurrent tasks for scripts/maf_to_gvcf.sh SLURM array
+# maf_to_gvcf_array_max_jobs: 4
+
+# Optional: max concurrent merge jobs (merge_contig/merge_contig_raw) when using the SLURM profile
+merge_gvcf_max_jobs: 4
+
+# Default SLURM resources (used by the provided profile). Override these as needed for your cluster and workload. Rule-specific resources can be set below and will take precedence over these defaults. For large chromosomes, merge_contig_mem may require 256G or more of RAM.
+default_threads: 2
+default_mem_mb: 20000
+default_time: "48:00:00"
+slurm_account: jrigrp
+slurm_partition: high
+
+# Rule-specific resources
+# maf_to_gvcf_threads: 2
+# maf_to_gvcf_mem_mb: 48000
+# maf_to_gvcf_time: "48:00:00"
+# merge_contig_threads: 2
+# merge_contig_time: "140:00:00"
+# merge_contig_mem_mb: 25600
+
+# Optional: normalize merged gVCFs with vt after GenotypeGVCFs
+# vt_normalize: false
+# vt_path: vt
