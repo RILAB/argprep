@@ -3,6 +3,8 @@ results/*
 logs/*
 example_data/*
 .snakemake/
+slurm-*.out
+*.snakemake.log
 AGENTS.md
 tests/__pycache__/
 !example_data/ind1.maf.gz
