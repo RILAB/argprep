@@ -83,3 +83,37 @@ def test_check_split_coverage_overlap_fails(tmp_path: Path):
     except subprocess.CalledProcessError:
         return
     raise AssertionError("check_split_coverage should have failed on overlap")
+
+
+def test_check_split_coverage_empty_inputs_warns_not_fails(tmp_path: Path):
+    prefix = tmp_path / "combined.SCAFFOLD_24"
+    fai = tmp_path / "ref.fa.fai"
+    fai.write_text("SCAFFOLD_24\t100\t0\t0\t0\n", encoding="utf-8")
+
+    (tmp_path / "combined.SCAFFOLD_24.clean").write_text(
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "combined.SCAFFOLD_24.inv").write_text(
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "combined.SCAFFOLD_24.filtered.bed").write_text("", encoding="utf-8")
+
+    _run(
+        [
+            sys.executable,
+            str(Path("scripts") / "check_split_coverage.py"),
+            str(prefix),
+            "--fai",
+            str(fai),
+        ],
+        cwd=Path.cwd(),
+    )
+
+    report = tmp_path / "combined.SCAFFOLD_24.coverage.txt"
+    text = report.read_text(encoding="utf-8")
+    assert "chrom=SCAFFOLD_24" in text
+    assert "warning=No records found in clean/inv/filtered.bed" in text

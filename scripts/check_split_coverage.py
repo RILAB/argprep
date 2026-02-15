@@ -189,6 +189,15 @@ def format_overlap_report(
     return "\n".join(lines)
 
 
+def _chrom_from_prefix(prefix: Path) -> str | None:
+    # Fallback for empty split outputs: infer contig from combined.<contig> prefix.
+    name = prefix.name
+    marker = "combined."
+    if marker not in name:
+        return None
+    return name.split(marker, 1)[1] or None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Check split coverage against reference length.")
     ap.add_argument("prefix", help="Prefix for split outputs (e.g., results/split/combined.1)")
@@ -217,7 +226,7 @@ def main() -> None:
     bed_chrom, bed_intervals = read_bed_intervals(filtered_bed)
 
     # Determine the contig name from whichever input provides one.
-    chrom = clean_chrom or inv_chrom or bed_chrom
+    chrom = clean_chrom or inv_chrom or bed_chrom or _chrom_from_prefix(prefix)
     if chrom is None:
         sys.exit("ERROR: unable to determine chromosome from inputs.")
 
@@ -227,6 +236,22 @@ def main() -> None:
 
     fai = Path(args.fai)
     chrom_len = load_fai_length(fai, chrom)
+
+    # Empty split outputs can happen when a contig is absent in all input gVCFs.
+    # Record this as a warning-style report instead of failing the workflow.
+    if not clean_intervals and not inv_intervals and not bed_intervals:
+        report = prefix.with_suffix(prefix.suffix + ".coverage.txt")
+        report.write_text(
+            f"chrom={chrom}\n"
+            "clean_bp=0\n"
+            "inv_bp=0\n"
+            "filtered_bed_bp=0\n"
+            "total_bp=0\n"
+            f"chrom_len={chrom_len}\n"
+            "warning=No records found in clean/inv/filtered.bed; likely absent in all gVCFs.\n",
+            encoding="utf-8",
+        )
+        return
 
     # Overlaps indicate split outputs are not mutually exclusive.
     overlap_ci = overlap_bp(clean_intervals, inv_intervals)
