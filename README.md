@@ -41,6 +41,7 @@ The pipeline can be run one of two ways, both from the repo root. **It is recomm
 
 A default SLURM profile is provided under `profiles/slurm/`. Edit `profiles/slurm/config.yaml` to customize sbatch options if needed.
 Defaults for account/partition and baseline resources are set in `config.yaml` (`slurm_account`, `slurm_partition`, `default_*`).
+SLURM stdout/stderr logs are written to `logs/slurm/` by default.
 
 ```bash
 snakemake --profile profiles/slurm

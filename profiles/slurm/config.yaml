@@ -2,7 +2,7 @@
 # Edit this file to customize sbatch options for your cluster.
 
 executor: cluster-generic
-cluster-generic-submit-cmd: "sbatch --account {config[slurm_account]} --partition {config[slurm_partition]} --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.time}"
+cluster-generic-submit-cmd: "sbatch --account {config[slurm_account]} --partition {config[slurm_partition]} --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.time} --output logs/slurm/slurm-%j.out --error logs/slurm/slurm-%j.err"
 
 jobs: 200
 cores: 2
