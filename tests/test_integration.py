@@ -102,6 +102,89 @@ def test_snakemake_summary(tmp_path: Path):
     )
 
 
+def test_snakemake_contig_mismatch_handling(tmp_path: Path):
+    _require_integration()
+    _require_conda_tools(
+        "argprep", "snakemake", "samtools", "bcftools", "tabix", "bgzip", "gatk", "java"
+    )
+    repo = Path.cwd()
+
+    # Build a reference with one real contig and one contig absent from MAFs.
+    ref_src = repo / "example_data" / "ref.fa"
+    if not ref_src.exists():
+        pytest.skip(f"Missing reference FASTA: {ref_src}")
+    ref_lines = ref_src.read_text(encoding="utf-8", errors="ignore").splitlines()
+    if not ref_lines or not ref_lines[0].startswith(">"):
+        pytest.skip(f"Unexpected reference FASTA format: {ref_src}")
+    seq = "".join(line.strip() for line in ref_lines[1:] if not line.startswith(">"))
+    if not seq:
+        pytest.skip(f"Unable to parse sequence from {ref_src}")
+    ref = tmp_path / "ref_with_extra.fa"
+    ref.write_text(
+        ">1\n"
+        + seq
+        + "\n"
+        + ">fai_only_contig\n"
+        + "ACGTACGTACGT\n",
+        encoding="utf-8",
+    )
+    _run([_conda_exe(), "run", "-n", "argprep", "samtools", "faidx", str(ref)], cwd=repo)
+
+    maf_dir = tmp_path / "maf"
+    maf_dir.mkdir()
+    shutil.copyfile(repo / "example_data" / "ind2.maf.gz", maf_dir / "ind2.maf.gz")
+    # Include a MAF-only contig that is intentionally not in the reference.
+    (maf_dir / "mafonly.maf").write_text(
+        "##maf version=1\n"
+        "a score=0\n"
+        "s maf_only_contig 0 8 + 8 ACGTACGT\n"
+        "s ghost_sample 0 8 + 8 ACGTACGT\n",
+        encoding="utf-8",
+    )
+
+    gvcf_dir = tmp_path / "gvcf"
+    results_dir = tmp_path / "results"
+    summary_target = str(results_dir / "summary.html")
+    _run(
+        [
+            _conda_exe(),
+            "run",
+            "-n",
+            "argprep",
+            "env",
+            "PATH=/opt/anaconda3/envs/argprep/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME=/tmp",
+            "TMPDIR=/tmp",
+            "XDG_CACHE_HOME=/tmp",
+            "SNAKEMAKE_OUTPUT_CACHE=/tmp/snakemake",
+            "SNAKEMAKE_SOURCE_CACHE=/tmp/snakemake",
+            "snakemake",
+            "-j",
+            "2",
+            "--config",
+            f"maf_dir={maf_dir}",
+            f"reference_fasta={ref}",
+            f"gvcf_dir={gvcf_dir}",
+            f"results_dir={results_dir}",
+            "samples=['ind2']",
+            "contigs=['chr1','requested_only_contig']",
+            "--",
+            summary_target,
+        ],
+        cwd=repo,
+    )
+
+    summary_text = Path(summary_target).read_text(encoding="utf-8", errors="ignore")
+    assert "Configured contigs not present in reference .fai were skipped" in summary_text
+    assert "requested_only_contig" in summary_text
+    assert "Configured contigs were remapped to renamed-reference contigs" in summary_text
+    assert "chr1-&gt;1" in summary_text
+    assert "MAF contigs not present in reference" in summary_text
+    assert "maf_only_contig" in summary_text
+    assert "Reference contigs not present in MAFs" in summary_text
+    assert "fai_only_contig" in summary_text
+
+
 def test_maf_to_gvcf_single_sample(tmp_path: Path):
     _require_integration()
     _require_conda_tools("argprep", "java")

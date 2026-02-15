@@ -232,6 +232,7 @@ split_prefixes = {str(k): str(v) for k, v in dict(snakemake.params.split_prefixe
 split_status_files = [str(p) for p in snakemake.params.split_status_files]
 dropped_contigs_not_in_ref = [str(c) for c in snakemake.params.dropped_contigs_not_in_ref]
 requested_contigs = [str(c) for c in snakemake.params.requested_contigs]
+remapped_contigs = [(str(a), str(b)) for a, b in snakemake.params.remapped_contigs]
 
 warnings = []
 log_paths = []
@@ -280,6 +281,13 @@ if dropped_contigs_not_in_ref:
     warnings.append(
         "WARNING: Contigs requested="
         f"{len(requested_contigs)}, running={len(contigs)}, skipped={len(dropped_contigs_not_in_ref)}"
+    )
+if remapped_contigs:
+    preview_pairs = ", ".join(f"{src}->{dst}" for src, dst in remapped_contigs[:20])
+    extra = f" (+{len(remapped_contigs) - 20} more)" if len(remapped_contigs) > 20 else ""
+    warnings.append(
+        "WARNING: Configured contigs were remapped to renamed-reference contigs: "
+        f"{preview_pairs}{extra}"
     )
 
 missing_contigs_by_gvcf: dict[str, list[str]] = {}

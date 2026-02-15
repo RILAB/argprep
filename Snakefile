@@ -182,30 +182,64 @@ def _read_fai_contigs(fai: Path) -> list[str]:
     return contigs
 
 
+def _resolve_requested_contigs(
+    requested: list[str], available: list[str]
+) -> tuple[list[str], list[str], list[tuple[str, str]]]:
+    available_set = set(available)
+    available_norm: dict[str, list[str]] = {}
+    for name in available:
+        available_norm.setdefault(_normalize_contig(name), []).append(name)
+
+    kept: list[str] = []
+    dropped: list[str] = []
+    remapped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw in requested:
+        req = str(raw)
+        mapped = req
+        if req in available_set:
+            mapped = req
+        else:
+            candidates = available_norm.get(_normalize_contig(req), [])
+            if len(candidates) == 1:
+                mapped = candidates[0]
+                remapped.append((req, mapped))
+            else:
+                dropped.append(req)
+                continue
+        if mapped not in seen:
+            kept.append(mapped)
+            seen.add(mapped)
+    return kept, dropped, remapped
+
+
 def _read_contigs():
-    fai = REF_FASTA.with_suffix(REF_FASTA.suffix + ".fai")
-    if not fai.exists():
+    orig_fai = REF_FASTA.with_suffix(REF_FASTA.suffix + ".fai")
+    if not orig_fai.exists():
         raise ValueError(
             "Reference FASTA index (.fai) not found. "
             "Either run 'samtools faidx' on the reference or set 'contigs' in config.yaml."
         )
-    ref_contigs = _read_fai_contigs(fai)
+    target_fai = Path(REF_FAI)
+    if target_fai.exists():
+        ref_contigs = _read_fai_contigs(target_fai)
+    else:
+        ref_contigs = _read_fai_contigs(orig_fai)
+
     if "contigs" in config:
         requested = [str(c) for c in config["contigs"]]
-        ref_set = set(ref_contigs)
-        kept = [c for c in requested if c in ref_set]
-        dropped = [c for c in requested if c not in ref_set]
+        kept, dropped, remapped = _resolve_requested_contigs(requested, ref_contigs)
         if not kept:
             raise ValueError(
                 "None of the configured contigs are present in reference .fai: "
                 + ", ".join(requested[:10])
             )
-        return kept, dropped, requested
-    return ref_contigs, [], list(ref_contigs)
+        return kept, dropped, requested, remapped
+    return ref_contigs, [], list(ref_contigs), []
 
 
 SAMPLES = _discover_samples()
-CONTIGS, DROPPED_CONTIGS_NOT_IN_REF, REQUESTED_CONTIGS = _read_contigs()
+CONTIGS, DROPPED_CONTIGS_NOT_IN_REF, REQUESTED_CONTIGS, REMAPPED_CONTIGS = _read_contigs()
 
 GVCF_BASES = [f"{sample}To{REF_BASE}" for sample in SAMPLES]
 
@@ -388,6 +422,7 @@ rule summary_report:
         ],
         dropped_contigs_not_in_ref=DROPPED_CONTIGS_NOT_IN_REF,
         requested_contigs=REQUESTED_CONTIGS,
+        remapped_contigs=REMAPPED_CONTIGS,
     script:
         "scripts/summary_report.py"
 
