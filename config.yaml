@@ -15,10 +15,10 @@ sample_suffix: _anchorwave
 fill_gaps: false
 outputJustGT: false
 
-# Optional: list of contigs to process (one per line). If specified, the workflow will only run on these contigs. Contig names should match those in reference_fasta.
-# If omitted (comment out "contigs" line), the workflow will run all contigs but expects reference_fasta.fai to exist.
-contigs:
-  - 1
+# Optional: list of contigs to process (one per line). If specified, the workflow will only run on these contigs. Contig names should match those in reference_fasta. To run this, uncomment lines below, adding one line for each contig you wish to run.
+# By default the workflow will run all contigs present in ALL maf files.
+#contigs:
+# - 1
 
 # Optional ploidy override. If omitted, ploidy is inferred from MAF block structure
 # as max(non-reference "s" lines per block), with a default of 1.
