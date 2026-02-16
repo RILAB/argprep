@@ -39,7 +39,6 @@ MERGE_CONTIG_TIME = str(config.get("merge_contig_time", config.get("default_time
 DEFAULT_JAVA_MEM_MB = max(256, int(DEFAULT_MEM_MB * 0.9))
 VT_NORMALIZE = bool(config.get("vt_normalize", False))
 VT_PATH = str(config.get("vt_path", "vt"))
-MERGED_GENOTYPER = "selectvariants"
 
 workflow.global_resources["merge_gvcf_jobs"] = int(config.get("merge_gvcf_max_jobs", 4))
 
@@ -68,24 +67,49 @@ def _normalize_contig(name: str) -> str:
     return name if name else "0"
 
 
-def _read_maf_contigs() -> set[str]:
+def _maf_path_for_sample(sample: str) -> Path:
+    maf = MAF_DIR / f"{sample}.maf"
+    maf_gz = MAF_DIR / f"{sample}.maf.gz"
+    if maf.exists():
+        return maf
+    if maf_gz.exists():
+        return maf_gz
+    return maf
+
+
+def _read_maf_contigs(maf_path: Path) -> set[str]:
     contigs = set()
-    maf_files = list(MAF_DIR.glob("*.maf")) + list(MAF_DIR.glob("*.maf.gz"))
-    for maf in sorted(maf_files):
-        try:
-            if maf.name.endswith(".gz"):
-                handle = gzip.open(maf, "rt", encoding="utf-8")
-            else:
-                handle = maf.open("r", encoding="utf-8")
-            with handle:
-                for line in handle:
-                    if not line or line.startswith("#"):
-                        continue
-                    parts = line.split()
-                    if parts and parts[0] == "s" and len(parts) >= 2:
-                        contigs.add(parts[1])
-        except OSError:
-            continue
+    try:
+        if maf_path.name.endswith(".gz"):
+            handle = gzip.open(maf_path, "rt", encoding="utf-8")
+        else:
+            handle = maf_path.open("r", encoding="utf-8")
+        with handle:
+            first_src = None
+            for line in handle:
+                if not line or line.startswith("#"):
+                    continue
+                stripped = line.strip()
+                if not stripped:
+                    if first_src is not None:
+                        contigs.add(first_src)
+                        first_src = None
+                    continue
+                parts = stripped.split()
+                if not parts:
+                    continue
+                if parts[0] == "a":
+                    if first_src is not None:
+                        contigs.add(first_src)
+                    first_src = None
+                    continue
+                if parts[0] == "s" and len(parts) >= 2 and first_src is None:
+                    # Use first sequence src in each block as the reference-side contig.
+                    first_src = parts[1]
+            if first_src is not None:
+                contigs.add(first_src)
+    except OSError:
+        return set()
     return contigs
 
 
@@ -170,6 +194,23 @@ def _discover_samples():
     samples = set(glob_wildcards(maf_pattern).sample)
     samples.update(glob_wildcards(maf_gz_pattern).sample)
     return sorted(samples)
+
+
+def _read_maf_contig_sets(samples: list[str]) -> dict[str, set[str]]:
+    contigs_by_sample: dict[str, set[str]] = {}
+    for sample in samples:
+        maf_path = _maf_path_for_sample(sample)
+        contigs_by_sample[sample] = _read_maf_contigs(maf_path)
+    return contigs_by_sample
+
+
+def _contigs_not_in_all_mafs(contigs_by_sample: dict[str, set[str]]) -> list[str]:
+    if not contigs_by_sample:
+        return []
+    all_sets = list(contigs_by_sample.values())
+    union = set().union(*all_sets) if all_sets else set()
+    intersection = set.intersection(*all_sets) if all_sets else set()
+    return sorted(union - intersection)
 
 
 def _infer_ploidy_from_maf(maf_path: Path, max_blocks: int = 10000) -> int:
@@ -282,34 +323,14 @@ def _resolve_requested_contigs(
     return kept, dropped, remapped
 
 
-def _read_contigs():
-    orig_fai = REF_FASTA.with_suffix(REF_FASTA.suffix + ".fai")
-    if not orig_fai.exists():
-        raise ValueError(
-            "Reference FASTA index (.fai) not found. "
-            "Either run 'samtools faidx' on the reference or set 'contigs' in config.yaml."
-        )
-    target_fai = Path(REF_FAI)
-    if target_fai.exists():
-        ref_contigs = _read_fai_contigs(target_fai)
-    else:
-        ref_contigs = _read_fai_contigs(orig_fai)
-
-    if "contigs" in config:
-        requested = [str(c) for c in config["contigs"]]
-        kept, dropped, remapped = _resolve_requested_contigs(requested, ref_contigs)
-        if not kept:
-            raise ValueError(
-                "None of the configured contigs are present in reference .fai: "
-                + ", ".join(requested[:10])
-            )
-        return kept, dropped, requested, remapped
-    return ref_contigs, [], list(ref_contigs), []
-
-
 SAMPLES = _discover_samples()
 PLOIDY, PLOIDY_SOURCE, PLOIDY_FILE_VALUES, PLOIDY_WARNINGS = _resolve_ploidy(SAMPLES)
-CONTIGS, DROPPED_CONTIGS_NOT_IN_REF, REQUESTED_CONTIGS, REMAPPED_CONTIGS = _read_contigs()
+MAF_CONTIGS_BY_SAMPLE = _read_maf_contig_sets(SAMPLES)
+if MAF_CONTIGS_BY_SAMPLE:
+    MAF_CONTIG_INTERSECTION = sorted(set.intersection(*MAF_CONTIGS_BY_SAMPLE.values()))
+else:
+    MAF_CONTIG_INTERSECTION = []
+CONTIGS_NOT_IN_ALL_MAFS = _contigs_not_in_all_mafs(MAF_CONTIGS_BY_SAMPLE)
 
 GVCF_BASES = [f"{sample}To{REF_BASE}" for sample in SAMPLES]
 
@@ -330,7 +351,20 @@ def _active_contig_resolution() -> tuple[list[str], list[str], list[str], list[t
                 + ", ".join(requested[:10])
             )
         return kept, dropped, requested, remapped
-    return available, [], list(available), []
+
+    requested = list(MAF_CONTIG_INTERSECTION)
+    if not requested:
+        raise ValueError(
+            "No contigs are shared across all MAF files. "
+            "Set explicit 'contigs' in config.yaml to override."
+        )
+    kept, dropped, remapped = _resolve_requested_contigs(requested, available)
+    if not kept:
+        raise ValueError(
+            "No shared MAF contigs are present in renamed reference .fai. "
+            "Set explicit 'contigs' in config.yaml to override."
+        )
+    return kept, dropped, requested, remapped
 
 
 def _active_contigs() -> list[str]:
@@ -526,6 +560,7 @@ rule summary_report:
         ploidy_source=PLOIDY_SOURCE,
         ploidy_file_values=PLOIDY_FILE_VALUES,
         ploidy_warnings=PLOIDY_WARNINGS,
+        contigs_not_in_all_mafs=CONTIGS_NOT_IN_ALL_MAFS,
         dropped_contigs_not_in_ref=lambda wc: _active_contig_resolution()[1],
         requested_contigs=lambda wc: _active_contig_resolution()[2],
         remapped_contigs=lambda wc: _active_contig_resolution()[3],

@@ -233,6 +233,7 @@ split_status_files = [str(p) for p in snakemake.params.split_status_files]
 dropped_contigs_not_in_ref = [str(c) for c in snakemake.params.dropped_contigs_not_in_ref]
 requested_contigs = [str(c) for c in snakemake.params.requested_contigs]
 remapped_contigs = [(str(a), str(b)) for a, b in snakemake.params.remapped_contigs]
+contigs_not_in_all_mafs = [str(c) for c in getattr(snakemake.params, "contigs_not_in_all_mafs", [])]
 ploidy = int(getattr(snakemake.params, "ploidy", 1))
 ploidy_source = str(getattr(snakemake.params, "ploidy_source", "unknown"))
 ploidy_file_values = {
@@ -295,6 +296,17 @@ if remapped_contigs:
         "WARNING: Configured contigs were remapped to renamed-reference contigs: "
         f"{preview_pairs}{extra}"
     )
+if contigs_not_in_all_mafs:
+    preview = ", ".join(contigs_not_in_all_mafs[:20])
+    extra = (
+        f" (+{len(contigs_not_in_all_mafs) - 20} more)"
+        if len(contigs_not_in_all_mafs) > 20
+        else ""
+    )
+    warnings.append(
+        "WARNING: Contigs not present in all MAF files were excluded from default "
+        f"processing: {preview}{extra}"
+    )
 for message in ploidy_warnings:
     warnings.append(f"WARNING: Ploidy inference: {message}")
 
@@ -356,6 +368,17 @@ with report_path.open("w", encoding="utf-8") as handle:
             handle.write(
                 f"<li><code>{html.escape(maf_name)}</code>: inferred ploidy {value}</li>\n"
             )
+        handle.write("</ul>\n")
+
+    if contigs_not_in_all_mafs:
+        handle.write("<h2>Contigs Not In All MAF Files</h2>\n")
+        handle.write(
+            "<p><em>These contigs are not present in every MAF and are excluded "
+            "from default contig selection unless explicitly listed in config.</em></p>\n"
+        )
+        handle.write("<ul>\n")
+        for contig in contigs_not_in_all_mafs:
+            handle.write(f"<li><code>{html.escape(contig)}</code></li>\n")
         handle.write("</ul>\n")
 
     handle.write("<h2>Jobs run</h2>\n")

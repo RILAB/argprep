@@ -185,6 +185,79 @@ def test_snakemake_contig_mismatch_handling(tmp_path: Path):
     assert "fai_only_contig" in summary_text
 
 
+def test_snakemake_default_contigs_use_maf_intersection(tmp_path: Path):
+    _require_integration()
+    _require_conda_tools(
+        "argprep", "snakemake", "samtools", "bcftools", "tabix", "bgzip", "gatk", "java"
+    )
+    repo = Path.cwd()
+
+    ref = tmp_path / "ref.fa"
+    ref.write_text(
+        ">1\n" + ("ACGT" * 50) + "\n" + ">2\n" + ("TGCA" * 50) + "\n",
+        encoding="utf-8",
+    )
+    _run([_conda_exe(), "run", "-n", "argprep", "samtools", "faidx", str(ref)], cwd=repo)
+
+    maf_dir = tmp_path / "maf"
+    maf_dir.mkdir()
+    (maf_dir / "s1.maf").write_text(
+        "##maf version=1\n"
+        "a score=0\n"
+        "s 1 0 12 + 200 ACGTACGTACGT\n"
+        "s s1 0 12 + 200 ACGTACGTACGT\n"
+        "\n"
+        "a score=0\n"
+        "s 2 0 12 + 200 TGCATGCATGCA\n"
+        "s s1 0 12 + 200 TGCATGCATGCA\n",
+        encoding="utf-8",
+    )
+    (maf_dir / "s2.maf").write_text(
+        "##maf version=1\n"
+        "a score=0\n"
+        "s 1 0 12 + 200 ACGTACGTACGT\n"
+        "s s2 0 12 + 200 ACGTACGTACGT\n",
+        encoding="utf-8",
+    )
+
+    gvcf_dir = tmp_path / "gvcf"
+    results_dir = tmp_path / "results"
+    summary_target = str(results_dir / "summary.html")
+    _run(
+        [
+            _conda_exe(),
+            "run",
+            "-n",
+            "argprep",
+            "env",
+            "PATH=/opt/anaconda3/envs/argprep/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME=/tmp",
+            "TMPDIR=/tmp",
+            "XDG_CACHE_HOME=/tmp",
+            "SNAKEMAKE_OUTPUT_CACHE=/tmp/snakemake",
+            "SNAKEMAKE_SOURCE_CACHE=/tmp/snakemake",
+            "snakemake",
+            "-j",
+            "2",
+            "--config",
+            f"maf_dir={maf_dir}",
+            f"reference_fasta={ref}",
+            f"gvcf_dir={gvcf_dir}",
+            f"results_dir={results_dir}",
+            "samples=['s1','s2']",
+            "--",
+            summary_target,
+        ],
+        cwd=repo,
+    )
+
+    summary_text = Path(summary_target).read_text(encoding="utf-8", errors="ignore")
+    assert "Contigs not present in all MAF files were excluded from default processing" in summary_text
+    assert "<code>2</code>" in summary_text
+    assert (results_dir / "combined" / "combined.1.gvcf.gz").exists()
+    assert not (results_dir / "combined" / "combined.2.gvcf.gz").exists()
+
+
 def test_maf_to_gvcf_single_sample(tmp_path: Path):
     _require_integration()
     _require_conda_tools("argprep", "java")
