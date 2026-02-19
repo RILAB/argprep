@@ -60,7 +60,7 @@ def test_singer_keeps_genotypes_and_strips_nonref_alt(tmp_path: Path):
     gvcf.write_text(
         "##fileformat=VCFv4.2\n"
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2\tS3\n"
-        "1\t2\t.\tA\tG,<NON_REF>\t.\t.\tDP=30\tGT:AD\t0/1:0,1\t./.:.\t0/0:1,0\n",
+        "1\t2\t.\tA\tG,<NON_REF>\t.\t.\tDP=30\tGT:AD\t0/1:0,1\t0/1:1,1\t0/0:1,0\n",
         encoding="utf-8",
     )
 
@@ -84,7 +84,7 @@ def test_singer_keeps_genotypes_and_strips_nonref_alt(tmp_path: Path):
     # ALT should drop <NON_REF>, but genotype/sample fields should be preserved.
     assert parts[4] == "G"
     assert parts[8] == "GT:AD"
-    assert parts[9:] == ["0/1:0,1", "./.:.", "0/0:1,0"]
+    assert parts[9:] == ["0/1:0,1", "0/1:1,1", "0/0:1,0"]
 
 
 def _count_vcf_records(path: Path) -> int:
@@ -164,3 +164,37 @@ def test_split_alt_dot_and_nonref_only_are_invariant(tmp_path: Path):
     # ALT="." and ALT="<NON_REF>"-only records are invariant in current logic.
     assert inv_records == 3
     assert clean_records == 0
+
+
+def test_missing_gt_exclusion_stats_written_per_sample(tmp_path: Path):
+    gvcf = tmp_path / "in.gvcf"
+    gvcf.write_text(
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tbad\tgood\n"
+        "1\t1\t.\tA\tG\t.\t.\tDP=10\tGT\t.\t0/1\n"
+        "1\t2\t.\tA\tG\t.\t.\tDP=10\tGT\t.\t0/1\n"
+        "1\t3\t.\tA\tG\t.\t.\tDP=10\tGT\t.\t0/1\n"
+        "1\t4\t.\tA\tG\t.\t.\tDP=10\tGT\t0/1\t0/1\n",
+        encoding="utf-8",
+    )
+
+    prefix = tmp_path / "out"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(Path("scripts") / "split.py"),
+            "--out-prefix",
+            str(prefix),
+            str(gvcf),
+        ],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "WARNING:" not in proc.stderr
+    stats = (tmp_path / "out.missing_gt_snp_by_sample.tsv").read_text(encoding="utf-8")
+    assert "sample\texcluded_snp_sites\ttotal_excluded_snp_sites" in stats
+    assert "bad\t3\t3" in stats
+    assert "good\t0\t3" in stats

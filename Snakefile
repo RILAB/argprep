@@ -494,7 +494,7 @@ def _summary_jobs() -> list[tuple[str, list[str]]]:
                 [
                     str(_split_prefix(c)) + suffix
                     for c in contigs
-                    for suffix in (".inv", ".filtered", ".clean", ".missing.bed")
+                    for suffix in (".inv", ".filtered", ".clean", ".missing.bed", ".missing_gt_snp_by_sample.tsv")
                 ],
             ),
             ("check_split_coverage", [str(_split_prefix(c)) + ".coverage.txt" for c in contigs]),
@@ -539,6 +539,7 @@ rule summary_report:
         invs=lambda wc: [str(_split_prefix(c)) + ".inv" + SPLIT_SUFFIX for c in _active_contigs()],
         filts=lambda wc: [str(_split_prefix(c)) + ".filtered" + SPLIT_SUFFIX for c in _active_contigs()],
         cleans=lambda wc: [str(_split_prefix(c)) + ".clean" + SPLIT_SUFFIX for c in _active_contigs()],
+        missing_gt_stats=lambda wc: [str(_split_prefix(c)) + ".missing_gt_snp_by_sample.tsv" for c in _active_contigs()],
         dropped=str(GVCF_DIR / "cleangVCF" / "dropped_indels.bed"),
     output:
         report=str(RESULTS_DIR / "summary.html"),
@@ -827,6 +828,7 @@ rule split_gvcf:
         filt=str(RESULTS_DIR / "split" / ("combined.{contig}.filtered" + SPLIT_SUFFIX)),
         clean=str(RESULTS_DIR / "split" / ("combined.{contig}.clean" + SPLIT_SUFFIX)),
         missing=str(RESULTS_DIR / "split" / ("combined.{contig}.missing.bed" + SPLIT_SUFFIX)),
+        missing_gt_stats=str(RESULTS_DIR / "split" / "combined.{contig}.missing_gt_snp_by_sample.tsv"),
     params:
         filter_multiallelic=FILTER_MULTIALLELIC,
         bgzip_output=BGZIP_OUTPUT,
@@ -842,6 +844,7 @@ rule split_gvcf:
         if [ "{params.bgzip_output}" = "True" ]; then
           cmd+=(--bgzip-output)
         fi
+        cmd+=(--missing-gt-stats-out "{output.missing_gt_stats}")
         cmd+=("{input.gvcf}")
         "${{cmd[@]}}"
         """

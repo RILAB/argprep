@@ -238,6 +238,9 @@ def main() -> None:
     clean_bp = 0
     missing_bp = 0
     singer_reformat: bool | None = None
+    sample_names: list[str] = []
+    missing_gt_snp_total = 0
+    missing_gt_snp_by_sample: dict[str, int] = {}
 
 
     # ---------------- Argument parsing ----------------
@@ -268,6 +271,14 @@ def main() -> None:
         default=None,
         help="Reference .fai to fill missing BED gaps at contig ends.",
     )
+    ap.add_argument(
+        "--missing-gt-stats-out",
+        default=None,
+        help=(
+            "Optional TSV output path for per-sample counts of SNP sites excluded "
+            "from clean due to missing genotype calls."
+        ),
+    )
     args = ap.parse_args()
 
     in_path = args.vcf
@@ -290,6 +301,7 @@ def main() -> None:
     out_filt = prefix + ".filtered"
     out_clean = prefix + ".clean"
     out_missing = prefix + ".missing.bed"
+    out_missing_gt_stats = args.missing_gt_stats_out or (prefix + ".missing_gt_snp_by_sample.tsv")
     bgzip_output = args.bgzip_output
 
     out_inv_final = out_inv + (".gz" if bgzip_output else "")
@@ -330,6 +342,7 @@ def main() -> None:
 
         def flush_group(records: list[dict]) -> None:
             nonlocal inv_bp, filtered_bp, clean_bp, singer_reformat
+            nonlocal missing_gt_snp_total, missing_gt_snp_by_sample
             if not records:
                 return
             has_inv = any(r["is_inv"] for r in records)
@@ -342,6 +355,18 @@ def main() -> None:
                 records.clear()
                 return
             if has_filtered or has_missing_gt:
+                # Track SNP-like sites that were excluded only because sample GTs were missing.
+                if has_missing_gt and not has_filtered:
+                    missing_gt_snp_total += 1
+                    missing_samples: set[str] = set()
+                    for r in records:
+                        for idx in r["missing_gt_sample_idxs"]:
+                            if idx < len(sample_names):
+                                missing_samples.add(sample_names[idx])
+                            else:
+                                missing_samples.add(f"sample_{idx + 1}")
+                    for sample in missing_samples:
+                        missing_gt_snp_by_sample[sample] = missing_gt_snp_by_sample.get(sample, 0) + 1
                 for r in records:
                     f_filt.write(r["line"] + "\n")
                     filtered_bp += 1
@@ -386,6 +411,8 @@ def main() -> None:
                     f_clean.write(raw)
                 # Buffer meta/header lines until we see the #CHROM header line.
                 elif raw.startswith("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"):
+                    header_cols = raw.rstrip("\n").split("\t")
+                    sample_names = header_cols[9:] if len(header_cols) > 9 else []
                     # First: inject provenance headers (##...).
                     for ln in prov_lines:
                         f_inv.write(ln)
@@ -554,7 +581,11 @@ def main() -> None:
                 group_chrom = chrom
                 group_pos = int(cols[1])
             gts = [c.split(":", 1)[0] for c in cols[9:]] if len(cols) > 9 else ["."]
-            has_missing_gt = any(gt == "." for gt in gts)
+            missing_gt_sample_idxs = [
+                i for i, gt in enumerate(gts)
+                if ("." in gt) or (gt == "")
+            ]
+            has_missing_gt = len(missing_gt_sample_idxs) > 0
             group.append(
                 {
                     "line": line,
@@ -562,6 +593,7 @@ def main() -> None:
                     "is_inv": is_inv,
                     "is_filtered": is_filtered,
                     "has_missing_gt": has_missing_gt,
+                    "missing_gt_sample_idxs": missing_gt_sample_idxs,
                 }
             )
 
@@ -579,6 +611,13 @@ def main() -> None:
                 missing_bp += (chrom_len - last_end)
 
         print(f"  missing:  {missing_bp:,}",file=sys.stderr)
+
+    with open(out_missing_gt_stats, "w", encoding="utf-8") as f_stats:
+        f_stats.write("sample\texcluded_snp_sites\ttotal_excluded_snp_sites\n")
+        names = sample_names if sample_names else sorted(missing_gt_snp_by_sample.keys())
+        for sample in names:
+            count = missing_gt_snp_by_sample.get(sample, 0)
+            f_stats.write(f"{sample}\t{count}\t{missing_gt_snp_total}\n")
 
     if bgzip_output:
         for path in (out_inv, out_filt, out_clean, out_missing):

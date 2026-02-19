@@ -221,6 +221,86 @@ def _svg_scatter_plot(
     return "\n".join(parts)
 
 
+def _read_missing_gt_stats(paths: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                header = handle.readline()
+                if not header:
+                    continue
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) < 2:
+                        continue
+                    sample = parts[0]
+                    try:
+                        value = int(parts[1])
+                    except ValueError:
+                        continue
+                    counts[sample] = counts.get(sample, 0) + value
+        except OSError:
+            continue
+    return counts
+
+
+def _svg_horizontal_bar_chart(labels: list[str], values: list[int], width: int = 900) -> str:
+    if not labels or not values or len(labels) != len(values):
+        return "<p>No data available.</p>"
+    max_label_len = max(len(label) for label in labels)
+    label_space = min(max(120, max_label_len * 8), 360)
+    bar_h = 18
+    gap = 8
+    margin = {"left": label_space + 20, "right": 70, "top": 24, "bottom": 30}
+    n = len(labels)
+    height = margin["top"] + margin["bottom"] + n * bar_h + max(n - 1, 0) * gap
+    plot_w = width - margin["left"] - margin["right"]
+    max_val = max(values)
+    if max_val <= 0:
+        max_val = 1
+
+    parts = [
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        'xmlns="http://www.w3.org/2000/svg" role="img">',
+        '<rect width="100%" height="100%" fill="white"/>',
+    ]
+    for idx, (label, value) in enumerate(zip(labels, values)):
+        y = margin["top"] + idx * (bar_h + gap)
+        bar_w = int(round((value / max_val) * plot_w))
+        parts.append(
+            f'<text x="{margin["left"] - 8}" y="{y + bar_h - 4}" text-anchor="end" '
+            f'font-size="11" font-family="sans-serif">{html.escape(label)}</text>'
+        )
+        parts.append(
+            f'<rect x="{margin["left"]}" y="{y}" width="{bar_w}" height="{bar_h}" fill="#4C78A8"/>'
+        )
+        parts.append(
+            f'<text x="{margin["left"] + bar_w + 6}" y="{y + bar_h - 4}" '
+            f'font-size="11" font-family="sans-serif">{value:,}</text>'
+        )
+
+    x0 = margin["left"]
+    y0 = height - margin["bottom"] + 2
+    parts.append(
+        f'<line x1="{x0}" y1="{y0}" x2="{x0 + plot_w}" y2="{y0}" stroke="#333" stroke-width="1"/>'
+    )
+    for i in range(5):
+        frac = i / 4
+        x = x0 + frac * plot_w
+        tick = int(round(frac * max_val))
+        parts.append(
+            f'<line x1="{x:.2f}" y1="{y0}" x2="{x:.2f}" y2="{y0 + 4}" stroke="#333" stroke-width="1"/>'
+        )
+        parts.append(
+            f'<text x="{x:.2f}" y="{y0 + 16}" text-anchor="middle" font-size="10" '
+            f'font-family="sans-serif">{tick:,}</text>'
+        )
+    parts.append("</svg>")
+    return "\n".join(parts)
+
+
 report_path = Path(snakemake.output.report)
 report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -542,6 +622,21 @@ with report_path.open("w", encoding="utf-8") as handle:
                 y_label="Site count",
             )
         )
+
+    handle.write("<h2>SNP Sites Excluded From Clean By MAF File</h2>\n")
+    excluded_by_sample = _read_missing_gt_stats([str(p) for p in snakemake.input.missing_gt_stats])
+    if excluded_by_sample:
+        ranked = sorted(excluded_by_sample.items(), key=lambda kv: kv[1], reverse=True)
+        labels = [name for name, _ in ranked]
+        values = [value for _, value in ranked]
+        handle.write(
+            _svg_horizontal_bar_chart(
+                labels,
+                values,
+            )
+        )
+    else:
+        handle.write("<p>No missing-genotype SNP exclusions were recorded.</p>\n")
 
     handle.write("<h2>Warnings</h2>\n")
     if warnings:
