@@ -329,8 +329,21 @@ log_paths.extend(sorted(Path("logs").rglob("*.err")))
 log_paths.extend(sorted(Path(".snakemake").rglob("*.log")))
 for log_path in log_paths:
     try:
+        in_shell_command_block = False
         with log_path.open("r", encoding="utf-8", errors="ignore") as handle:
             for line in handle:
+                # Snakemake logs include literal shell command text. Ignore WARNING
+                # tokens inside those blocks to avoid false positives from lines
+                # like: echo "WARNING: ..."
+                if line.startswith("Shell command:"):
+                    in_shell_command_block = True
+                    continue
+                if in_shell_command_block:
+                    if line.startswith(" ") or line.startswith("\t") or not line.strip():
+                        continue
+                    in_shell_command_block = False
+                if 'echo "WARNING:' in line or "echo 'WARNING:" in line:
+                    continue
                 if "WARNING" in line or "Warning" in line:
                     warnings.append(f"{log_path}: {line.rstrip()}")
     except OSError:
