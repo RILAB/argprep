@@ -5,6 +5,34 @@ v1.0 was a full rewrite from the legacy TASSEL/gVCF/GATK pipeline — the
 pre-v1.0 (`v0.x`) entries at the bottom describe that older lineage and do not
 carry forward to the v1.x series.
 
+## Unreleased
+
+### New auxiliary script: gapped alignment FASTA from the MAFs
+
+- Added [scripts/maf_to_fasta.py](scripts/maf_to_fasta.py), which builds a true
+  gapped multiple alignment for a reference window by merging the per-sample
+  pairwise MAFs through the reference. Deletions render as gap columns and
+  insertions add columns the other samples pad with gaps, so it is not limited to
+  the substitution-only view `window_to_fasta.py` reconstructs from the
+  `all_sites.vcf`. It reads the per-contig MAF chunks under
+  `results/maf_by_contig/` (or whole-genome MAFs via `--maf-dir`) and reuses the
+  existing MAF parser, block selection, conflict resolution, and quality-mask
+  machinery, so its calls agree with the VCF path base for base.
+- Like `window_to_fasta.py` it is standalone: no workflow rule invokes it, and the
+  pipeline's deliverables are unchanged. The window is user-chosen, so there is
+  nothing for `rule all` to target.
+- Conventions, all documented in the README: insertions are left-anchored to the
+  preceding reference base and left-aligned within its columns (which asserts a
+  homology the pairwise data cannot establish — inherent to any reference-anchored
+  merge); conflicting alignment blocks degrade an anchor to `N` and an insertion to
+  a run of `N`; `--mask-bed` reconciles the output with `mask.bed` rather than
+  shipping two contradictory views by default; `--max-columns` fails loudly instead
+  of exhausting memory in insertion-rich regions.
+- `maf_to_sites.py` gained `read_contig_length` and `read_contig_region`, which use
+  the `.fai` index to seek straight to a window so extracting a kilobase region does
+  not cost a whole-contig read. Existing callers are unaffected.
+- Closes the only open item under "Features" in [reports/backlog.md](reports/backlog.md).
+
 ## v1.9
 
 Acts on the [2026-08-09 code review](reports/code_review/2026-08-09.md). The

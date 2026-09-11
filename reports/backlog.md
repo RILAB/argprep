@@ -10,35 +10,13 @@ re-checked in the source at that point, not carried over on faith.
 
 ## Features
 
-- **Real alignment FASTA from the MAFs.** `scripts/window_to_fasta.py` emits a
-  reference-anchored substitution view: every sequence is exactly the window
-  length, insertions are dropped, and deletions render as `N`. A true multiple
-  alignment with gap columns would have to merge the N *pairwise* MAFs
-  transitively through the reference.
-
-  Mechanically this is roughly a day: read `results/maf_by_contig/<sample>/<contig>.maf.gz`
-  (per-contig chunks already exist), reuse `iter_maf_blocks` / `choose_sample_record`,
-  capture the insertion branch at `maf_to_sites.py:399` instead of skipping it,
-  then pad each anchor to the max insertion width across samples.
-
-  Four things make it more than a weekend hack:
-  - **Insertion homology is not established.** Two samples inserting at the same
-    anchor are not necessarily the same event; padding them into shared columns
-    asserts homology the pairwise data cannot support. Unavoidable in any
-    reference-anchored merge — the usual approach is to left-align and document it.
-  - **Overlapping blocks.** `_assign_code` (`maf_to_sites.py:359`) degrades
-    conflicting substitutions to `?`; insertions need an analogous rule and there
-    is no obvious right answer when two blocks disagree.
-  - **Agreement with the VCF.** Showing a base where `mask.bed` masked the site
-    ships two contradictory views of one run. Needs a deliberate choice, probably
-    a flag.
-  - **Width blowup.** Insertion-rich intergenic regions across many samples can
-    make a 10 kb window far wider than 10 kb; memory is columns × samples.
-
-  Recommend building it as a *new* script rather than extending `window_to_fasta.py`,
-  keeping the cheap reference-anchored view intact. It would become a second
-  consumer of the core calling logic (MAF parser, quality mask, missingness
-  semantics), not a standalone helper.
+- *(Nothing open.)* The "real alignment FASTA from the MAFs" item shipped as
+  [scripts/maf_to_fasta.py](../scripts/maf_to_fasta.py): a second consumer of the
+  core calling logic that keeps indels, with insertions left-anchored and
+  left-aligned, conflicting blocks degraded to `N`, VCF agreement behind
+  `--mask-bed`, and a `--max-columns` guard against width blowup. The homology
+  caveat is inherent to a reference-anchored merge and is documented rather than
+  solved. `scripts/window_to_fasta.py` keeps the cheap reference-anchored view.
 
 ## Bugs and hardening
 
