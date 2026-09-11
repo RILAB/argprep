@@ -336,3 +336,54 @@ output as a reference-anchored substitution view, not as a true alignment.
 
 The window is held in memory once per sample, so this is intended for kilobase-scale
 windows, not whole chromosomes.
+
+### `maf_to_fasta.py`
+
+[scripts/maf_to_fasta.py](scripts/maf_to_fasta.py) builds a **gapped multiple alignment**
+for a window by going back to the MAFs, so indels survive: a deletion becomes a gap
+column and an insertion adds columns that every other sample pads with gaps. This is the
+thing `window_to_fasta.py` deliberately is not. It reads the per-contig MAF chunks the
+workflow already writes under `results/maf_by_contig/`, so it does not need the
+`all_sites.vcf`:
+
+```bash
+python scripts/maf_to_fasta.py \
+  --maf-chunk-root results/maf_by_contig \
+  --reference-fasta /path/to/reference.fa \
+  --contig <contig> --start <start> --end <end> \
+  --out window.fa
+```
+
+`--start`/`--end` are 1-based inclusive and default to the whole contig. Pass
+`--maf-dir` instead of `--maf-chunk-root` to read whole-genome per-sample MAFs directly
+(`<sample>.maf` / `.maf.gz`), and `--quality-bed-dir` / `--quality-min` to apply the same
+per-sample quality masking the workflow uses. `--max-columns` caps the alignment width.
+
+The merge is **reference-anchored**: each reference base gets one anchor column, and the
+pairwise alignments are related to each other only through it. Four consequences are
+worth stating outright.
+
+- **Insertion homology is asserted, not established.** Insertions are left-anchored to
+  the preceding reference base and left-aligned within that anchor's columns, padded on
+  the right to the widest insertion any sample carries there. Two samples inserting at
+  the same anchor therefore share columns, but the pairwise MAFs cannot show that they
+  are the same event. An insertion preceding the window's first base anchors outside the
+  window and is dropped.
+- **Conflicting blocks degrade to `N`.** Where two alignment blocks cover one reference
+  position with different calls, the anchor becomes `N`, matching the `?` that
+  `maf_to_sites.py` assigns. The analogous rule for insertions is that conflicting
+  sequences at one anchor become a run of `N` as long as the longer of the two.
+- **By default it does not agree with the VCF.** It applies no missingness threshold and
+  does not know which sites the workflow masked, so it can show a base where
+  `mask.bed` masked the site. Pass `--mask-bed results/sites/combined.<contig>.mask.bed`
+  to reconcile them: masked reference positions render as `N` for every sample, and
+  insertions anchored there are dropped.
+- **Width can blow up.** An insertion-rich region across many samples can make a 10 kb
+  window far wider than 10 kb, and memory is columns × samples. `--max-columns` (default
+  5,000,000) fails with a clear message rather than exhausting memory.
+
+Characters mean: `A`/`C`/`G`/`T` a called base; `-` a gap, meaning either a deletion in
+that sample or padding beside another sample's insertion; `N` no information — the sample
+never aligned there, the MAF base was ambiguous, it fell below `--quality-min`, blocks
+conflicted, or `--mask-bed` masked the position. Unlike `window_to_fasta.py`, `N` no
+longer conflates deletions with the rest.
