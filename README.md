@@ -368,11 +368,14 @@ worth stating outright.
   the right to the widest insertion any sample carries there. Two samples inserting at
   the same anchor therefore share columns, but the pairwise MAFs cannot show that they
   are the same event. An insertion preceding the window's first base anchors outside the
-  window and is dropped.
+  window and is dropped. Leading insertions at a block boundary are retained when
+  their preceding reference coordinate lies inside the window.
 - **Conflicting blocks degrade to `N`.** Where two alignment blocks cover one reference
   position with different calls, the anchor becomes `N`, matching the `?` that
   `maf_to_sites.py` assigns. The analogous rule for insertions is that conflicting
   sequences at one anchor become a run of `N` as long as the longer of the two.
+  This includes an insertion conflicting with explicit absence in another block
+  spanning that slot. A block ending or starting at the slot does not establish absence.
 - **By default it does not agree with the VCF.** It applies no missingness threshold and
   does not know which sites the workflow masked, so it can show a base where
   `mask.bed` masked the site. Pass `--mask-bed results/sites/combined.<contig>.mask.bed`
@@ -380,7 +383,10 @@ worth stating outright.
   insertions anchored there are dropped.
 - **Width can blow up.** An insertion-rich region across many samples can make a 10 kb
   window far wider than 10 kb, and memory is columns × samples. `--max-columns` (default
-  5,000,000) fails with a clear message rather than exhausting memory.
+  5,000,000) rejects reference spans above the cap before loading sample alignments,
+  and checks the insertion-expanded width before rendering rows. It is a width limit,
+  not a memory guarantee: input parsing, stored projections, and sample count still
+  consume memory. Use an explicit small window for large genomes.
 
 Characters mean: `A`/`C`/`G`/`T` a called base; `-` a gap, meaning either a deletion in
 that sample or padding beside another sample's insertion; `N` no information — the sample

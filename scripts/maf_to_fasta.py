@@ -206,13 +206,24 @@ def load_sample_alignment(
     length = win_end - win_start
     anchors = bytearray(length)
     insertions: dict[int, str] = {}
+    absent = bytearray(length)
+
+    def record_slot(slot: int, seq: str) -> None:
+        if seq:
+            merge_insertion(insertions, slot, seq)
+            if absent[slot]:
+                merge_insertion(insertions, slot, "")
+        else:
+            absent[slot] = 1
+            if slot in insertions:
+                merge_insertion(insertions, slot, "")
 
     for block in iter_maf_blocks(maf_path):
         chosen = choose_sample_record(block, contig)
         if chosen is None:
             continue
         ref_record, sample_record = chosen
-        if ref_record.start >= win_end or ref_record.start + ref_record.size <= win_start:
+        if ref_record.start > win_end or ref_record.start + ref_record.size <= win_start:
             continue
 
         ref_pos = ref_record.start
@@ -223,7 +234,9 @@ def load_sample_alignment(
         sample_src_size = sample_record.src_size
         sample_minus = sample_record.strand == "-"
         sample_offset = 0
-        prev_idx: int | None = None
+        leading_anchor = ref_record.start - win_start - 1
+        prev_idx = leading_anchor if 0 <= leading_anchor < length else None
+        previous_ref_seen = False
         pending: list[str] = []
 
         for ref_char, sample_char in zip(ref_record.text.upper(), sample_record.text.upper()):
@@ -247,9 +260,10 @@ def load_sample_alignment(
 
             idx = ref_pos - win_start
             ref_pos += 1
-            if pending:
-                # prev_idx cannot be None here: pending only fills while it is set.
-                merge_insertion(insertions, prev_idx, "".join(pending))
+            if prev_idx is not None and (pending or previous_ref_seen):
+                # Absence is evidence only between two reference bases in a
+                # block; a block boundary alone says nothing about this slot.
+                record_slot(prev_idx, "".join(pending))
                 pending.clear()
             if idx >= length:
                 break
@@ -260,6 +274,7 @@ def load_sample_alignment(
                 continue
 
             prev_idx = idx
+            previous_ref_seen = True
             if sample_char == GAP:
                 _assign_code(anchors, idx, NUC_TO_CODE["-"])
                 continue
@@ -278,7 +293,7 @@ def load_sample_alignment(
                 _assign_code(anchors, idx, NUC_TO_CODE[UNKNOWN])
 
         if pending and prev_idx is not None:
-            merge_insertion(insertions, prev_idx, "".join(pending))
+            record_slot(prev_idx, "".join(pending))
 
     return anchors, insertions
 
@@ -449,6 +464,12 @@ def main() -> None:
     win_start = args.start - 1
     win_end = end
     length = win_end - win_start
+
+    if length > args.max_columns:
+        raise ValueError(
+            f"Reference window alone would be {length} columns, "
+            f"over --max-columns {args.max_columns}. Narrow the window or raise the cap."
+        )
 
     ref_seq = read_contig_region(reference_fasta, contig, win_start, win_end)
 

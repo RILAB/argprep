@@ -17,6 +17,57 @@ from scripts.maf_to_sites import read_contig_length, read_contig_region
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "maf_to_fasta.py"
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_insertion_conflicts_with_explicit_absence(tmp_path, reverse):
+    blocks = [("AC--GT", "s1", "ACTTGT"), ("ACGT", "s1", "ACGT")]
+    maf = tmp_path / "sample.maf"
+    _write_maf(maf, "chr1", blocks[::-1] if reverse else blocks)
+    anchors, insertions = load_sample_alignment(maf, "chr1", 0, 4)
+    assert list(anchors) == [1, 2, 3, 4]
+    assert insertions == {1: "??"}
+
+
+@pytest.mark.parametrize("window_end", [2, 4])
+def test_leading_block_insertion_kept_with_anchor_in_window(tmp_path, window_end):
+    maf = tmp_path / "sample.maf"
+    _write_maf_rows(maf, [("chr1", 2, "+", 4, "--GT"),
+                          ("s1", 0, "+", 4, "TTGT")])
+    _, insertions = load_sample_alignment(maf, "chr1", 0, window_end)
+    assert insertions == {1: "TT"}
+    _, insertions = load_sample_alignment(maf, "chr1", 2, 4)
+    assert insertions == {}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_block_boundary_does_not_establish_insertion_absence(tmp_path, reverse):
+    maf = tmp_path / "sample.maf"
+    blocks = [
+        "a\ns chr1 0 2 + 4 AC\ns s1 0 2 + 6 AC\n\n",
+        "a\ns chr1 2 2 + 4 GT\ns s1 4 2 + 6 GT\n\n",
+        "a\ns chr1 0 4 + 4 AC--GT\ns s1 0 6 + 6 ACTTGT\n\n",
+    ]
+    maf.write_text("".join(blocks[::-1] if reverse else blocks))
+    _, insertions = load_sample_alignment(maf, "chr1", 0, 4)
+    assert insertions == {1: "TT"}
+
+
+def test_reference_span_cap_precedes_sequence_and_alignment_loading(monkeypatch):
+    import scripts.maf_to_fasta as module
+
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--maf-dir", "unused",
+        "--samples", "s1", "--reference-fasta", "unused.fa", "--contig", "chr1",
+        "--max-columns", "5", "--out", "unused.fa"])
+    monkeypatch.setattr(module, "read_contig_length", lambda *args: 100)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Oversized reference span must be rejected before loading")
+
+    monkeypatch.setattr(module, "read_contig_region", unexpected)
+    monkeypatch.setattr(module, "load_sample_alignment", unexpected)
+    with pytest.raises(ValueError, match="Reference window alone.*over --max-columns"):
+        module.main()
+
+
 def _ungapped(text: str) -> str:
     return text.replace("-", "")
 

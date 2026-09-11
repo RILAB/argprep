@@ -286,6 +286,56 @@ def read_contig_sequence(reference_fasta: Path, contig: str) -> str:
     return "".join(seq_parts).upper()
 
 
+def read_contig_length(reference_fasta: Path, contig: str) -> int:
+    """Length of a reference contig, from the .fai index when one exists."""
+    fai_path = Path(str(reference_fasta) + ".fai")
+    if fai_path.exists() and not str(reference_fasta).endswith(".gz"):
+        entry = _read_fai_entry(fai_path, contig)
+        if entry is not None:
+            return entry[0]
+    return len(read_contig_sequence(reference_fasta, contig))
+
+
+def read_contig_region(reference_fasta: Path, contig: str, start: int, end: int) -> str:
+    """Reference bases over the 0-based half-open interval ``[start, end)``.
+
+    With a .fai index this seeks straight to the region, so pulling a kilobase
+    window does not cost a whole-contig read; without one it falls back to
+    :func:`read_contig_sequence` and slices.
+    """
+    if start < 0 or end < start:
+        raise ValueError(f"Invalid region [{start}, {end}) for '{contig}'")
+    if start == end:
+        return ""
+    fai_path = Path(str(reference_fasta) + ".fai")
+    if fai_path.exists() and not str(reference_fasta).endswith(".gz"):
+        entry = _read_fai_entry(fai_path, contig)
+        if entry is not None:
+            length, offset, linebases, linewidth = entry
+            if end > length:
+                raise ValueError(
+                    f"Region [{start}, {end}) exceeds length {length} of '{contig}'"
+                )
+            first = offset + (start // linebases) * linewidth + (start % linebases)
+            last = offset + ((end - 1) // linebases) * linewidth + ((end - 1) % linebases)
+            with open(reference_fasta, "rb") as fh:
+                fh.seek(first)
+                raw = fh.read(last - first + 1)
+            seq = raw.replace(b"\r", b"").replace(b"\n", b"")
+            if len(seq) != end - start:
+                raise ValueError(
+                    f"FAI seek returned {len(seq)} bases for '{contig}':[{start}, {end}), "
+                    f"expected {end - start}"
+                )
+            return seq.decode("ascii").upper()
+    seq = read_contig_sequence(reference_fasta, contig)
+    if end > len(seq):
+        raise ValueError(
+            f"Region [{start}, {end}) exceeds length {len(seq)} of '{contig}'"
+        )
+    return seq[start:end]
+
+
 def iter_maf_blocks(path: Path) -> Iterator[list[MafRecord]]:
     def validate_block(records: list[MafRecord], line_number: int) -> list[MafRecord]:
         lengths = {len(record.text) for record in records}
