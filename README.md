@@ -2,6 +2,8 @@
 
 This repository provides a Snakemake workflow for processing AnchorWave MAFs directly into per-contig site outputs. The workflow emits all-sites VCFs, variant-only VCFs, and BED masks from the alignments. Written with the aid of [Codex](https://openai.com/codex/) and [Claude](https://claude.ai/). Note that v1.0 was a major rewrite from v0.4, and no longer uses Tassel or GATK. 
 
+![ARGprep overview: per-sample AnchorWave MAFs are projected onto reference coordinates, every site is called and filtered, and per-contig all-sites VCFs, variant VCFs, and BED masks are produced for ARG inference](docs/graphical_abstract.png)
+
 If you use this please cite: 
 
 Ross-Ibarra, J. 2026. ARGprep: A pipeline to prepare pairwise whole-genome alignments for ancestral recombination graph estimation. [doi: 10.5281/zenodo.19655050](https://doi.org/10.5281/zenodo.19655050)
