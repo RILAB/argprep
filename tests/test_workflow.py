@@ -226,6 +226,43 @@ def test_workflow_propagates_max_missing_fraction(
     assert bool(records) is expect_retained
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+def test_workflow_combines_per_sample_missing_masks_by_contig(tmp_path: Path) -> None:
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">1\nAAAA\n", encoding="utf-8")
+
+    maf_dir = tmp_path / "maf"
+    maf_dir.mkdir()
+    _write_pairwise_maf(maf_dir / "s1.maf", "1", "AAAA", "s1", "NAAA")
+    _write_pairwise_maf(maf_dir / "s2.maf", "1", "AAAA", "s2", "AANA")
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "maf_dir: maf",
+                "reference_fasta: ref.fa",
+                "results_dir: results",
+                'samples: ["s1", "s2"]',
+                "max_missing_count: 2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    combined = tmp_path / "results" / "sites" / "combined.1.sample.mask.bed"
+    result = _run_snakemake(tmp_path, config)
+    assert result.returncode == 0, result.stderr
+    assert combined.read_text(encoding="utf-8") == (
+        "1\t0\t1\ts1\n"
+        "1\t2\t3\ts2\n"
+    )
+
+
 def _write_config(path: Path, *lines: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

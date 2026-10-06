@@ -279,6 +279,10 @@ def _direct_sample_missing_mask_out(contig, sample):
     return RESULTS_DIR / "sites" / f"combined.{contig}.{sample}.missing.bed"
 
 
+def _direct_sample_mask_out(contig):
+    return RESULTS_DIR / "sites" / f"combined.{contig}.sample.mask.bed"
+
+
 def _split_sample_dir(sample):
     return MAF_CHUNK_ROOT / sample
 
@@ -294,6 +298,7 @@ def _all_targets(_wc):
         + [str(_direct_variants_out(c)) for c in contigs]
         + [str(_direct_mask_out(c)) for c in contigs]
         + [str(_direct_sample_missing_mask_out(c, s)) for c in contigs for s in SAMPLES]
+        + [str(_direct_sample_mask_out(c)) for c in contigs]
         + ([str(_direct_sites_out(c)) for c in contigs] if EMIT_ARGWEAVER_SITES else [])
         + [str(RESULTS_DIR / "summary.html")]
     )
@@ -301,6 +306,9 @@ def _all_targets(_wc):
 
 rule all:
     input: _all_targets
+
+
+ruleorder: combine_sample_missing_masks > direct_maf_sites
 
 
 rule prepare_reference:
@@ -432,6 +440,18 @@ rule direct_maf_sites:
         fi
         "${{cmd[@]}}"
         """
+
+
+rule combine_sample_missing_masks:
+    input:
+        lambda wc: [
+            str(_direct_sample_missing_mask_out(wc.contig, sample))
+            for sample in SAMPLES
+        ],
+    output:
+        str(RESULTS_DIR / "sites" / "combined.{contig}.sample.mask.bed"),
+    shell:
+        "cat {input:q} > {output:q}"
 
 
 rule summary_report:
