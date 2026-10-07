@@ -8,9 +8,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.maf_to_sites import (
+    choose_sample_record,
     discover_samples,
     iter_maf_blocks,
     load_quality_mask,
+    load_sample_calls,
     maf_path_for_sample,
     maf_path_for_sample_with_map,
     missing_threshold,
@@ -1318,3 +1320,20 @@ def test_quality_min_requires_quality_bed_dir(tmp_path: Path):
     )
     assert proc.returncode != 0
     assert "--quality-min requires --quality-bed-dir" in proc.stderr
+
+
+@pytest.mark.parametrize("strand", ["-", "?"])
+def test_choose_sample_record_rejects_non_plus_reference_row(tmp_path: Path, strand: str) -> None:
+    maf = tmp_path / "s1.maf"
+    maf.write_text(f"a\ns chr1 0 4 {strand} 10 ACGT\ns s1 0 4 + 10 ACGT\n\n")
+    block = next(iter_maf_blocks(maf))
+    with pytest.raises(ValueError, match="only '\\+' reference rows are supported"):
+        choose_sample_record(block, "chr1")
+    with pytest.raises(ValueError, match="reference rows are supported"):
+        load_sample_calls(maf, "chr1", 10)
+
+
+def test_choose_sample_record_ignores_strand_of_other_contigs(tmp_path: Path) -> None:
+    maf = tmp_path / "s1.maf"
+    maf.write_text("a\ns chr2 0 4 - 10 ACGT\ns s1 0 4 + 10 ACGT\n\n")
+    assert choose_sample_record(next(iter_maf_blocks(maf)), "chr1") is None

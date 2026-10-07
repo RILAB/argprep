@@ -487,3 +487,10 @@ def test_read_contig_region_falls_back_without_a_fai(tmp_path: Path) -> None:
     assert read_contig_region(ref, "chr1", 3, 8) == seq[3:8]
     with pytest.raises(ValueError, match="exceeds length"):
         read_contig_region(ref, "chr1", 3, 99)
+
+
+def test_minus_strand_reference_row_is_rejected(tmp_path: Path) -> None:
+    maf = tmp_path / "s1.maf"
+    _write_maf_rows(maf, [("chr1", 0, "-", 10, "ACGT"), ("s1", 0, "+", 10, "ACGT")])
+    with pytest.raises(ValueError, match="reference rows are supported"):
+        load_sample_alignment(maf, "chr1", 0, 10)

@@ -343,6 +343,14 @@ def choose_sample_record(block: list[MafRecord], contig: str) -> tuple[MafRecord
     ref = block[0]
     if normalize_contig(ref.src) != normalize_contig(contig):
         return None
+    if ref.strand != "+":
+        # Callers walk reference columns from ref.start as forward-strand
+        # positions; a minus-strand reference row would be placed silently at
+        # the wrong coordinates. AnchorWave never writes one, so reject it.
+        raise ValueError(
+            f"MAF reference row for '{ref.src}' at start {ref.start} is on strand "
+            f"'{ref.strand}'; only '+' reference rows are supported"
+        )
     if len(block) >= 2:
         # Some pairwise MAFs use the same contig name for both the reference
         # and query rows, so the second alignment row is still the sample.
