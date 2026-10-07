@@ -11,13 +11,6 @@ carry forward to the v1.x series.
 
 - New QC-only target, `snakemake ... maf_qc`. It runs [scripts/maf_stats.py](scripts/maf_stats.py) as one SLURM job per sample, then [scripts/maf_stats_report.py](scripts/maf_stats_report.py) as one small report job. Outputs go to `results/maf_stats/`.
 - It is not part of `rule all`. The main workflow neither runs it nor depends on it, so inspecting QC and starting the main run are separate decisions.
-- Metrics:
-  - reference coverage and query coverage (query `.fai` via `query_fai_dir`, or MAF `srcSize` labelled as such);
-  - aligned bp;
-  - identity and gap fraction;
-  - block count, block N50, and overlapping reference bp;
-  - strand flips, reference-contig jumps and out-of-order blocks, each counted independently;
-  - unique breakpoint adjacencies, and breakpoints per Gb covered.
 - Strict validation of pairwise MAF structure, coordinates, source sizes and reference names.
 - Cross-sample flags: direction-aware robust z-scores with per-metric scale floors (needs at least 5 samples), plus optional absolute thresholds.
 - [scripts/maf_dotplot.py](scripts/maf_dotplot.py) is refactored and now used by QC:
@@ -27,6 +20,14 @@ carry forward to the v1.x series.
   - writes fixed-size PNGs with batched line drawing;
   - exits non-zero when an input fails.
 - `MafRecord` and `iter_maf_blocks` moved from `maf_to_sites.py` to `common.py` so there is one MAF parser; `maf_to_sites` re-exports both.
+- Metrics, with alignment and assembly quality reported separately:
+  - Coverage headlines are base-aligned (`aligned_reference_pct`, `aligned_query_pct`). Block-span coverage is kept as a secondary metric, because AnchorWave blocks span chromosomes between anchors: in a test on two teosinte genomes, blocks spanned about 94% of B73 v5 but about 36% of reference bases were aligned.
+  - Identity over A/C/G/T pairs; insertion and deletion columns reported separately (a single gap fraction was dominated by AnchorWave's long within-block indels).
+  - Strand flips, reference-contig jumps and out-of-order adjacencies counted independently, plus unique breakpoint adjacencies per Gb aligned.
+  - Optional query assembly FASTA (`--fasta`, `query_fasta_dir`) adds scaffold and contig N50 (contigs split at runs of at least 10 N), N gaps, GC, soft-masking (`NA` for unmasked FASTAs), telomeric ends on chromosome-scale sequences, and the content of unaligned sequences. Without it, MAF-only contiguity (aligned contigs only) is reported. Query names such as `<assembly file>.chr6` resolve to FASTA name `chr6`.
+  - Nested blocks (a query interval inside a larger block's) are reported separately and kept out of the breakpoint walk, where each would have produced two fake strand flips. Also `overlapping_query_bp`.
+  - Each breakpoint is located on its query contig (`contig_end`, `n_gap` with the FASTA, or `interior`) and checked for recurrence across samples (`maf_stats_recurrence_window_bp`). New outputs: `<sample>.breakpoints.tsv` and `maf_stats.breakpoints.tsv`.
+  - Block comparisons are chunked, to bound memory on chromosome-scale blocks.
 - `matplotlib` added to `argprep.yml` (and so to the containers).
 - `prepare_reference` and `index_reference` now request explicit small SLURM resources instead of the profile's 20 GB / 48 h default.
 

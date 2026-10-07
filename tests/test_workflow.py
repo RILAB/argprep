@@ -933,3 +933,39 @@ def test_maf_qc_uses_query_fai_dir_and_requires_every_sample(tmp_path: Path) -> 
     values = dict(zip(header.split("\t"), row.split("\t")))
     assert values["query_length_source"] == "query_fai"
     assert values["query_length_bp"] == "40"
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+def test_maf_qc_uses_query_fasta_dir_for_assembly_metrics(tmp_path: Path) -> None:
+    fasta_dir = tmp_path / "assemblies"
+    fasta_dir.mkdir()
+    (fasta_dir / "s1.fa").write_text(">s1\nACGTACGTAC\n>scaffold\nNNNNNacgtacgtac\n", encoding="utf-8")
+    (fasta_dir / "s2.fasta").write_text(">s2\nACGAACGTAC\n", encoding="utf-8")
+    config = _maf_qc_fixture(tmp_path, "query_fasta_dir: assemblies")
+    result = _run_snakemake(tmp_path, config, "maf_qc")
+    assert result.returncode == 0, result.stderr
+
+    stats = tmp_path / "results" / "maf_stats"
+    header, row = (stats / "s1.maf_stats.tsv").read_text(encoding="utf-8").splitlines()
+    values = dict(zip(header.split("\t"), row.split("\t")))
+    assert values["query_length_source"] == "query_fasta"
+    assert values["assembly_sequences"] == "2"
+    assert values["unaligned_contigs"] == "1"
+    assert (stats / "maf_stats.breakpoints.tsv").exists()
+    assert (stats / "maf_stats.nested_blocks.tsv").exists()
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+def test_query_fasta_dir_and_query_fai_dir_are_exclusive(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    config = _maf_qc_fixture(tmp_path, "query_fasta_dir: a", "query_fai_dir: b")
+    result = _run_snakemake(tmp_path, config, "maf_qc")
+    assert result.returncode != 0
+    assert "not both" in (result.stderr + result.stdout)

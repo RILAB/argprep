@@ -178,15 +178,28 @@ sbatch profiles/slurm/run-controller.sbatch options.yaml
 
 `maf_qc` runs one SLURM job per sample (`scripts/maf_stats.py`), then one small job that builds the cross-sample report (`scripts/maf_stats_report.py`). It is not part of `rule all`. The main workflow neither runs nor waits for it, and finishing QC never starts the main analysis. Building the `maf_qc` DAG does not read the MAFs. The main workflow's automatic contig discovery does (see [#36](https://github.com/RILAB/argprep/issues/36)).
 
-Each sample's MAF is read once. That single pass validates it and computes:
+Each sample's MAF is read once. QC keeps **alignment quality** and **assembly quality** apart. Alignment metrics come from the MAF alone. Assembly metrics need the query assembly FASTA (`query_fasta_dir`); without it they are `NA`, and the MAF-only view is used.
 
-- **Coverage.** Reference coverage (union of block intervals ÷ reference `.fai` length) and query coverage. Also aligned bp, both as covered span and as reference bases opposite a query base.
-- **Identity and gaps.** Identity counts only columns where both bases are A/C/G/T, case-insensitive. Gap fraction is columns with `-` in either row.
-- **Blocks.** Block count, block N50, and `overlapping_reference_bp`.
-- **Structural breakpoints along each query contig.** Strand flips, reference-contig jumps and out-of-order blocks are each counted on their own, plus the number of adjacencies with any of the three, per Gb covered.
+Alignment metrics (always):
+
+- **Aligned bases.** Reference (and query) bases opposite a base in the other row, as bp and as % of the genome. This is the headline coverage figure. **Block span** (the union of block intervals) is reported too, but for AnchorWave it overstates alignment. Its blocks run between collinear anchors and can span tens of Mb, mostly as long indels. In a test on two teosinte genomes against B73 v5, blocks spanned about 94% of the reference, but only about 36% of reference bases were aligned base-to-base.
+- **Identity.** Matches ÷ columns where both bases are A/C/G/T, case-insensitive.
+- **Insertion and deletion columns.** Query base opposite a reference gap, and reference base opposite a query gap, each as % of alignment columns.
+- **Blocks and overlap.** Block count, `overlapping_reference_bp` and `overlapping_query_bp` (bases covered by more than one block; 0 for one-to-one alignments).
+- **Nested blocks.** A block whose query interval lies inside a larger block's: the same query sequence aligned in two places, often far apart on the reference. Seen in NAM vs B73 MAFs. Nested blocks are listed separately (`<sample>.nested_blocks.tsv`) and kept out of the breakpoint walk; otherwise each one would pair with its container as two fake strand flips. The report checks them for recurrence too: a nested block shared across samples at the same reference coordinates may reflect structure specific to the reference.
+- **Structural breakpoints along each query contig.** Strand flips, reference-contig jumps and out-of-order blocks are each counted on their own, plus the number of adjacencies with any of the three, per Gb aligned. Each breakpoint also gets a location: `contig_end` (within `maf_stats_breakpoint_context_bp`, default 1 Mb, of a query contig end; points to assembly or scaffolding), `n_gap` (next to an N run; needs the FASTA), or `interior` (real structure or misalignment; telling those apart needs read data). The report also checks each breakpoint for **recurrence**: whether other samples have a breakpoint at matching reference coordinates. Shared breakpoints are more likely biological, such as a known inversion; private ones are more likely artifacts.
+- **MAF-only contiguity.** Number and N50 of query contigs with at least one alignment. Contigs with no alignment don't appear in the MAF, so this is a lower bound on fragmentation.
 - **Dotplots.**
 
-Identity, gap fraction, block count and N50 are computed per block, so overlapping or secondary blocks are counted more than once. Coverage is union-based. `overlapping_reference_bp` shows how much duplication there is.
+Assembly metrics (with the FASTA):
+
+- **Size and contiguity.** Total length and sequence count. **Scaffold** N50/L50 is over FASTA records. **Contig** N50/L50 is over the pieces left after splitting at N gaps, and is the real contiguity measure: a chromosome-scale scaffold can contain hundreds of gaps.
+- **Ns.** N bases, and the number of N gaps (runs of at least 10 N; shorter runs are ambiguous bases).
+- **GC and soft-masking.** Soft-masked % is `NA` when the FASTA has no lowercase at all, i.e. it was never soft-masked.
+- **Telomeres.** A sequence end is telomeric when at least half of its terminal 1 kb is plant telomere repeat (`TTTAGGG`/`CCCTAAA`). Ends are counted on the **major** sequences (the largest ones covering 95% of the assembly; for a chromosome-level assembly, the chromosomes), reported as e.g. "14 / 20". Small scaffolds carrying telomere repeat are counted separately.
+- **Unaligned sequences.** Size and N/soft-masked content of sequences with no alignment. The FASTA's lengths also become the query-coverage denominator.
+
+Identity, aligned bases, and insertion/deletion counts are summed over columns, so overlapping or secondary blocks are counted more than once. Block span is union-based. `overlapping_reference_bp` shows how much duplication there is.
 
 The parser is strict. Each of the following stops the job with the file and block number in the error:
 
@@ -200,28 +213,40 @@ The parser is strict. Each of the following stops the job with the file and bloc
 
 Outputs, under `results/maf_stats/`:
 
-- `maf_stats.html` — the report. It has a flagged sample table, a strip plot of each metric across samples, per-sample drill-down with separate reference- and query-contig tables, metric definitions, and dotplot thumbnails.
-- `maf_stats.tsv` — one row per sample with every genome-wide metric and a `flags` column.
-- `<sample>.maf_stats.tsv`, `<sample>.by_reference_contig.tsv`, `<sample>.by_query_contig.tsv` — per-sample detail.
+- `maf_stats.html` — the report. It has a flagged alignment table, an assembly table, a cross-sample breakpoint table with recurrence, a strip plot of each flagged metric, per-sample drill-down (reference contigs, query contigs, breakpoints, dotplots), and metric definitions.
+- `maf_stats.tsv` — one row per sample with every genome-wide metric, the counts of recurrent and private breakpoints, and a `flags` column.
+- `maf_stats.breakpoints.tsv` — every breakpoint from every sample, with its location and the number of other samples sharing it.
+- `maf_stats.nested_blocks.tsv` — every nested block from every sample, with the number of other samples sharing it.
+- `<sample>.maf_stats.tsv`, `<sample>.by_reference_contig.tsv`, `<sample>.by_query_contig.tsv`, `<sample>.breakpoints.tsv`, `<sample>.nested_blocks.tsv` — per-sample detail. With the FASTA, the query-contig table lists every assembly contig, aligned or not.
 - `dotplots/<sample>/<reference_contig>.png` — 800×800 dotplots. Forward blocks are blue and reverse blocks red. Query contigs are stacked in labelled bands.
 
 How samples are flagged:
 
-- **Relative flags.** A sample is flagged when its robust z-score (median/MAD) passes 3.5 in the bad direction. Low coverage or identity is bad; high gap fraction, overlap, block count or breakpoints per Gb is bad. Each metric's scale has a floor, so near-constant cohorts aren't flagged for trivial differences. Relative flags need at least 5 samples.
+- **Relative flags.** A sample is flagged when its robust z-score (median/MAD) passes 3.5 in the bad direction. Bad when low: aligned reference and query %, identity, assembly contig N50. Bad when high: reference and query overlap, breakpoints per Gb aligned, reference-contig jumps, private breakpoints, assembly N %. Each metric's scale has a floor, so near-constant cohorts aren't flagged for trivial differences. Relative flags need at least 5 samples with a value for that metric, so assembly metrics are flagged only across the samples that have a FASTA.
 - **Absolute thresholds.** These are optional and off by default, because expected identity and fragmentation depend on divergence.
 
 QC config keys (all optional):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `query_fai_dir` | unset | Directory of query `.fai` files named `<sample>.fai`, `<sample>.fa.fai`, `<sample>.fasta.fai`, `<sample>.fna.fai`, `<sample>.fa.gz.fai` or `<sample>.fasta.gz.fai`. When set, every sample needs exactly one. Without it, query coverage uses only query contigs present in the MAF, which **overstates** coverage; the report marks this with †. |
+| `query_fasta_dir` | unset | Directory of query assembly FASTAs named `<sample>.fa`, `.fasta`, `.fna` (optionally `.gz`). Turns on the assembly metrics and the `n_gap` breakpoint class, and supplies query lengths. When set, every sample needs exactly one. |
+| `query_fai_dir` | unset | Lengths only, for when the FASTAs aren't available but `.fai` files are. Mutually exclusive with `query_fasta_dir`. Directory of query `.fai` files named `<sample>.fai`, `<sample>.fa.fai`, `<sample>.fasta.fai`, `<sample>.fna.fai`, `<sample>.fa.gz.fai` or `<sample>.fasta.gz.fai`. When set, every sample needs exactly one. With neither option, query coverage uses only query contigs present in the MAF, which **overstates** it; the report marks this with †. |
 | `maf_stats_min_block_bp` | `0` | Blocks shorter than this (reference span) are ignored when counting breakpoints only. |
 | `maf_stats_overlap_tolerance_bp` | `0` | Reference overlap allowed between adjacent same-strand blocks before they count as out of order. |
+| `maf_stats_breakpoint_context_bp` | `1000000` | A breakpoint this close to a query contig end (or N gap) is classed `contig_end` (or `n_gap`). |
+| `maf_stats_recurrence_window_bp` | `500000` | Breakpoints in two samples are the same when both junction ends fall within this distance on the same reference contigs. |
 | `maf_stats_dotplots` | `flagged` | `flagged` (reference contigs with breakpoints, densest first), `all`, or `false`. |
 | `maf_stats_dotplot_max` | `20` | Cap on `flagged` plots per sample; `0` = no cap. |
-| `maf_stats_flag_min_reference_coverage`, `maf_stats_flag_min_identity`, `maf_stats_flag_max_gap_fraction`, `maf_stats_flag_max_breakpoints_per_gb` | unset | Absolute flag thresholds (percentages, or breakpoints per Gb). |
-| `maf_stats_threads`, `maf_stats_mem_mb`, `maf_stats_time` | `1`, `16000`, `12:00:00` | Per-sample job resources. **Placeholders**: not yet benchmarked on production-size MAFs. |
+| `maf_stats_flag_min_aligned_reference`, `maf_stats_flag_min_identity`, `maf_stats_flag_max_breakpoints_per_gb` | unset | Absolute flag thresholds (aligned reference %, identity %, breakpoints per Gb aligned). |
+| `maf_stats_threads`, `maf_stats_mem_mb`, `maf_stats_time` | `1`, `16000`, `12:00:00` | Per-sample job resources. Provisional: a 7.7 GB AnchorWave MAF took about 1 minute and peaked near 10 GB before block comparisons were chunked. Not yet re-measured, and not measured with a FASTA. |
 | `maf_stats_report_mem_mb`, `maf_stats_report_time` | `4000`, `00:30:00` | Report job resources. |
+
+`scripts/maf_stats.py` also runs on its own, one sample at a time; `--fasta` is optional:
+
+```bash
+python scripts/maf_stats.py --maf S.maf.gz --reference-fai ref.fa.fai --sample S \
+  --out-dir qc [--fasta S.fa.gz]
+```
 
 `scripts/maf_dotplot.py` also works on its own for quick plots: `python scripts/maf_dotplot.py --maf S.maf.gz --reference-fai ref.fa.fai --out-dir plots`. It exits non-zero if any input fails.
 

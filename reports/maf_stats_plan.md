@@ -334,3 +334,30 @@ MAFs.
 3. Decide whether a future version should optionally emit multipage PDFs in addition to PNGs.
 4. Replace provisional `maf_stats_mem_mb` and `maf_stats_time` using real MaxRSS and elapsed
    measurements.
+
+## Revision after the first real-data run (2026-10-06)
+
+`maf_qc` was run on two mexadmix MAFs (`mex.5A3`, `parv.5A9`) against B73 v5. Four findings changed the metric set:
+
+- **Span coverage overstates alignment.** Blocks spanned about 94% of the reference, but only about 36% of reference bases were opposite a query base. AnchorWave blocks run between collinear anchors (45–66 blocks per genome, N50 53–107 Mb). Unalignable sequence appears as long indels inside blocks, not as gaps between them. Headline coverage is now base-aligned (`aligned_reference_pct`, `aligned_query_pct`); `block_span_*` is kept as secondary.
+- **Gap fraction (~80%) was dominated by those long indels.** It is replaced by separate `insertion_column_pct` and `deletion_column_pct`, and is no longer flagged.
+- **Block N50 is redundant with the breakpoint counts.** It is dropped. Block count is kept in the TSV but not flagged.
+- **Breakpoints per Gb** now use aligned bp as the denominator.
+
+Separating assembly quality from alignment quality:
+
+- **Optional query FASTA** (`--fasta` / `query_fasta_dir`). With it, the stage reports assembly contiguity (N50/L50), N bases and gaps, GC, soft-masking, telomeric ends (`TTTAGGG` in the terminal 10 kb) and unaligned-contig content. The FASTA's lengths become the query denominator. Without it, MAF-only contiguity of aligned contigs is reported as a lower bound. The mexadmix assemblies are not currently available.
+- **Breakpoint location.** Each breakpoint is classed `contig_end` (points to assembly or scaffolding), `n_gap` (needs the FASTA), or `interior`.
+- **Cross-sample recurrence** (in the report). A breakpoint shared with other samples at matching reference coordinates is more likely biological; a private one is more likely an artifact. Telling a real interior SV from a misassembly in a single sample would still need read data.
+
+Resources: the first version peaked near 10 GB RSS on a 7.7 GB MAF in about 1 minute. Block comparisons are now chunked; the new peak has not been re-measured.
+
+## Revision after NAM runs with assembly FASTAs (2026-10-06)
+
+CML103 and CML277 (NAM) against B73 v5, with their FASTAs:
+
+- **Nested blocks.** These MAFs contain small blocks whose query interval lies inside a large block's (e.g. CML103 chr1: query ~37 Mb aligned reversed to reference ~270 Mb, inside the forward chr1 block). The adjacency walk paired each one with its container as two fake strand flips. 37 of 41 CML breakpoints had query junctions wider than 8 Mb, and the `n_gap` labels were artifacts of those wide junctions. Nested blocks are now detected before the walk, reported in `<sample>.nested_blocks.tsv`, and checked for recurrence in the report. Some are shared by both CMLs at the same reference coordinates (chr7 ~149.0 Mb, chr8 ~169.6 Mb, chr10 ~118.5 Mb).
+- **`contig_end` window.** Raised from 100 kb to 1 Mb. Several flips sat 115–750 kb from a query contig end.
+- **Telomeres.** The old rule (20 copies within 10 kb) counted ends on small repeat-rich scaffolds, giving "40 telomeric ends" for a 10-chromosome assembly. The new rule needs at least 50% repeat in the terminal 1 kb, and counts ends on major sequences (covering 95% of the assembly) separately from small sequences.
+- **N50 and gaps.** Scaffold N50 and contig N50 (split at N runs of at least 10) are now both reported. N gaps count only runs of at least 10.
+- **Soft-masking.** `NA` when a FASTA has no lowercase (the NAM FASTAs are unmasked).

@@ -82,6 +82,14 @@ if SUMMARY_WINDOW_BP <= 0:
 MAF_STATS_DIR = RESULTS_DIR / "maf_stats"
 QUERY_FAI_DIR = config.get("query_fai_dir")
 QUERY_FAI_DIR = None if QUERY_FAI_DIR in (None, "") else Path(QUERY_FAI_DIR).resolve()
+QUERY_FASTA_DIR = config.get("query_fasta_dir")
+QUERY_FASTA_DIR = None if QUERY_FASTA_DIR in (None, "") else Path(QUERY_FASTA_DIR).resolve()
+if QUERY_FASTA_DIR is not None and QUERY_FAI_DIR is not None:
+    raise ValueError(
+        "Set query_fasta_dir or query_fai_dir, not both; the FASTA already supplies contig lengths."
+    )
+MAF_STATS_BREAKPOINT_CONTEXT_BP = int(config.get("maf_stats_breakpoint_context_bp", 1000000))
+MAF_STATS_RECURRENCE_WINDOW_BP = int(config.get("maf_stats_recurrence_window_bp", 500000))
 MAF_STATS_MIN_BLOCK_BP = int(config.get("maf_stats_min_block_bp", 0))
 MAF_STATS_OVERLAP_TOLERANCE_BP = int(config.get("maf_stats_overlap_tolerance_bp", 0))
 MAF_STATS_DOTPLOTS = str(config.get("maf_stats_dotplots", "flagged"))
@@ -93,9 +101,8 @@ if MAF_STATS_DOTPLOTS not in ("flagged", "all", "false"):
     )
 MAF_STATS_DOTPLOT_MAX = int(config.get("maf_stats_dotplot_max", 20))
 MAF_STATS_FLAG_OPTIONS = {
-    "--flag-min-reference-coverage": config.get("maf_stats_flag_min_reference_coverage"),
+    "--flag-min-aligned-reference": config.get("maf_stats_flag_min_aligned_reference"),
     "--flag-min-identity": config.get("maf_stats_flag_min_identity"),
-    "--flag-max-gap-fraction": config.get("maf_stats_flag_max_gap_fraction"),
     "--flag-max-breakpoints-per-gb": config.get("maf_stats_flag_max_breakpoints_per_gb"),
 }
 # Placeholder resources until real MAFs are benchmarked; override in the config.
@@ -144,6 +151,25 @@ def _query_fai_for_sample(sample: str) -> list[str]:
         raise ValueError(
             f"{problem} query .fai for sample '{sample}' in {QUERY_FAI_DIR} "
             f"(looked for {sample}{{{','.join(QUERY_FAI_SUFFIXES)}}})"
+        )
+    return [str(found[0])]
+
+
+QUERY_FASTA_SUFFIXES = (".fa", ".fasta", ".fna", ".fa.gz", ".fasta.gz", ".fna.gz")
+
+
+def _query_fasta_for_sample(sample: str) -> list[str]:
+    """`<sample>` + one of QUERY_FASTA_SUFFIXES under query_fasta_dir; [] when
+    the option is unset. Missing or ambiguous files are errors."""
+    if QUERY_FASTA_DIR is None:
+        return []
+    found = [QUERY_FASTA_DIR / f"{sample}{suffix}" for suffix in QUERY_FASTA_SUFFIXES]
+    found = [path for path in found if path.exists()]
+    if len(found) != 1:
+        problem = "No" if not found else "Multiple"
+        raise ValueError(
+            f"{problem} query FASTA for sample '{sample}' in {QUERY_FASTA_DIR} "
+            f"(looked for {sample}{{{','.join(QUERY_FASTA_SUFFIXES)}}})"
         )
     return [str(found[0])]
 
@@ -545,10 +571,13 @@ rule maf_stats:
         maf=lambda wc: _maf_input(wc.sample),
         fai=REF_FAI,
         query_fai=lambda wc: _query_fai_for_sample(wc.sample),
+        query_fasta=lambda wc: _query_fasta_for_sample(wc.sample),
     output:
         summary=str(MAF_STATS_DIR / "{sample}.maf_stats.tsv"),
         by_reference=str(MAF_STATS_DIR / "{sample}.by_reference_contig.tsv"),
         by_query=str(MAF_STATS_DIR / "{sample}.by_query_contig.tsv"),
+        breakpoints=str(MAF_STATS_DIR / "{sample}.breakpoints.tsv"),
+        nested=str(MAF_STATS_DIR / "{sample}.nested_blocks.tsv"),
         dotplots=directory(str(MAF_STATS_DIR / "dotplots" / "{sample}")),
     params:
         out_dir=str(MAF_STATS_DIR),
@@ -556,6 +585,7 @@ rule maf_stats:
         overlap_tolerance_bp=MAF_STATS_OVERLAP_TOLERANCE_BP,
         dotplots=MAF_STATS_DOTPLOTS,
         dotplot_max=MAF_STATS_DOTPLOT_MAX,
+        breakpoint_context_bp=MAF_STATS_BREAKPOINT_CONTEXT_BP,
     shell:
         """
         set -euo pipefail
@@ -567,8 +597,11 @@ rule maf_stats:
           --min-block-bp "{params.min_block_bp}"
           --overlap-tolerance-bp "{params.overlap_tolerance_bp}"
           --dotplots "{params.dotplots}"
-          --dotplot-max "{params.dotplot_max}")
-        if [ -n "{input.query_fai}" ]; then
+          --dotplot-max "{params.dotplot_max}"
+          --breakpoint-context-bp "{params.breakpoint_context_bp}")
+        if [ -n "{input.query_fasta}" ]; then
+          cmd+=(--fasta "{input.query_fasta}")
+        elif [ -n "{input.query_fai}" ]; then
           cmd+=(--query-fai "{input.query_fai}")
         fi
         "${{cmd[@]}}"
@@ -583,11 +616,16 @@ rule maf_stats_report:
         summaries=expand(str(MAF_STATS_DIR / "{sample}.maf_stats.tsv"), sample=SAMPLES),
         by_reference=expand(str(MAF_STATS_DIR / "{sample}.by_reference_contig.tsv"), sample=SAMPLES),
         by_query=expand(str(MAF_STATS_DIR / "{sample}.by_query_contig.tsv"), sample=SAMPLES),
+        breakpoints=expand(str(MAF_STATS_DIR / "{sample}.breakpoints.tsv"), sample=SAMPLES),
+        nested=expand(str(MAF_STATS_DIR / "{sample}.nested_blocks.tsv"), sample=SAMPLES),
         dotplots=expand(str(MAF_STATS_DIR / "dotplots" / "{sample}"), sample=SAMPLES),
     output:
         tsv=str(MAF_STATS_DIR / "maf_stats.tsv"),
         html=str(MAF_STATS_DIR / "maf_stats.html"),
+        breakpoints=str(MAF_STATS_DIR / "maf_stats.breakpoints.tsv"),
+        nested=str(MAF_STATS_DIR / "maf_stats.nested_blocks.tsv"),
     params:
+        recurrence_window_bp=MAF_STATS_RECURRENCE_WINDOW_BP,
         flag_args=" ".join(
             f"{option} {shlex.quote(str(value))}"
             for option, value in MAF_STATS_FLAG_OPTIONS.items()
@@ -600,6 +638,11 @@ rule maf_stats_report:
           --summaries {input.summaries:q} \
           --by-reference {input.by_reference:q} \
           --by-query {input.by_query:q} \
+          --breakpoints {input.breakpoints:q} \
+          --out-breakpoints-tsv "{output.breakpoints}" \
+          --nested-blocks {input.nested:q} \
+          --out-nested-tsv "{output.nested}" \
+          --recurrence-window-bp "{params.recurrence_window_bp}" \
           --out-tsv "{output.tsv}" \
           --out-html "{output.html}" \
           {params.flag_args}
@@ -611,6 +654,10 @@ rule maf_qc:
     input:
         str(MAF_STATS_DIR / "maf_stats.tsv"),
         str(MAF_STATS_DIR / "maf_stats.html"),
+        str(MAF_STATS_DIR / "maf_stats.breakpoints.tsv"),
+        str(MAF_STATS_DIR / "maf_stats.nested_blocks.tsv"),
+        expand(str(MAF_STATS_DIR / "{sample}.breakpoints.tsv"), sample=SAMPLES),
+        expand(str(MAF_STATS_DIR / "{sample}.nested_blocks.tsv"), sample=SAMPLES),
         expand(str(MAF_STATS_DIR / "{sample}.by_reference_contig.tsv"), sample=SAMPLES),
         expand(str(MAF_STATS_DIR / "{sample}.by_query_contig.tsv"), sample=SAMPLES),
         expand(str(MAF_STATS_DIR / "dotplots" / "{sample}"), sample=SAMPLES),

@@ -32,5 +32,8 @@ slurm_partition: high
 # maf_stats_dotplot_max: 20
 # maf_stats_min_block_bp: 0
 # maf_stats_overlap_tolerance_bp: 0
-# query_fai_dir: path/to/query_fais  # <sample>.fai etc.; omit to use MAF srcSize
+# query_fasta_dir: path/to/assemblies  # <sample>.fa[.gz] etc.; adds assembly metrics
+# query_fai_dir: path/to/query_fais     # lengths only; alternative to query_fasta_dir
+# maf_stats_breakpoint_context_bp: 1000000
+# maf_stats_recurrence_window_bp: 500000
 # maf_stats_flag_min_identity: 95
