@@ -26,3 +26,11 @@ maf_time: "72:00:00"
 # SLURM profile defaults
 slurm_account: jrigrp
 slurm_partition: high
+
+# First-stage MAF QC (`snakemake ... maf_qc`; never part of the default run).
+# maf_stats_dotplots: flagged        # flagged | all | false
+# maf_stats_dotplot_max: 20
+# maf_stats_min_block_bp: 0
+# maf_stats_overlap_tolerance_bp: 0
+# query_fai_dir: path/to/query_fais  # <sample>.fai etc.; omit to use MAF srcSize
+# maf_stats_flag_min_identity: 95

@@ -6,6 +6,7 @@ channels:
 dependencies:
   - python=3.11
   - numpy
+  - matplotlib
   - msprime
   - samtools
   - snakemake>=8.0.0

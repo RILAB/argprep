@@ -166,6 +166,65 @@ snakemake --profile profiles/slurm --configfile options.yaml --rerun-incomplete
 
 When using the SLURM profile, set `slurm_account` and `slurm_partition` in your config file. Slurm defaults for other resources are defined in `profiles/slurm/config.yaml`. Parsing the MAFs is the most computationally expensive step in the pipeline, and direct-maf rule resources can be overridden in `options.yaml` (`maf_mem_mb`, `maf_time`). Site calling is single-threaded, so each per-contig job requests one core.
 
+### Check alignment quality first (`maf_qc`)
+
+Before the expensive per-contig run, check each input MAF with the QC-only target:
+
+```bash
+sbatch profiles/slurm/run-controller.sbatch options.yaml maf_qc
+# inspect results/maf_stats/maf_stats.html, then start the main run separately:
+sbatch profiles/slurm/run-controller.sbatch options.yaml
+```
+
+`maf_qc` runs one SLURM job per sample (`scripts/maf_stats.py`), then one small job that builds the cross-sample report (`scripts/maf_stats_report.py`). It is not part of `rule all`. The main workflow neither runs nor waits for it, and finishing QC never starts the main analysis. Building the `maf_qc` DAG does not read the MAFs. The main workflow's automatic contig discovery does (see [#36](https://github.com/RILAB/argprep/issues/36)).
+
+Each sample's MAF is read once. That single pass validates it and computes:
+
+- **Coverage.** Reference coverage (union of block intervals ÷ reference `.fai` length) and query coverage. Also aligned bp, both as covered span and as reference bases opposite a query base.
+- **Identity and gaps.** Identity counts only columns where both bases are A/C/G/T, case-insensitive. Gap fraction is columns with `-` in either row.
+- **Blocks.** Block count, block N50, and `overlapping_reference_bp`.
+- **Structural breakpoints along each query contig.** Strand flips, reference-contig jumps and out-of-order blocks are each counted on their own, plus the number of adjacencies with any of the three, per Gb covered.
+- **Dotplots.**
+
+Identity, gap fraction, block count and N50 are computed per block, so overlapping or secondary blocks are counted more than once. Coverage is union-based. `overlapping_reference_bp` shows how much duplication there is.
+
+The parser is strict. Each of the following stops the job with the file and block number in the error:
+
+- a block without exactly one reference row and one query row;
+- a size field that disagrees with the ungapped sequence;
+- coordinates outside `srcSize`;
+- inconsistent `srcSize` values;
+- an unknown or ambiguous reference contig (matched exactly, or by the pipeline's contig-name normalization when that gives a single match);
+- a minus-strand reference row;
+- an empty MAF.
+
+Outputs, under `results/maf_stats/`:
+
+- `maf_stats.html` — the report. It has a flagged sample table, a strip plot of each metric across samples, per-sample drill-down with separate reference- and query-contig tables, metric definitions, and dotplot thumbnails.
+- `maf_stats.tsv` — one row per sample with every genome-wide metric and a `flags` column.
+- `<sample>.maf_stats.tsv`, `<sample>.by_reference_contig.tsv`, `<sample>.by_query_contig.tsv` — per-sample detail.
+- `dotplots/<sample>/<reference_contig>.png` — 800×800 dotplots. Forward blocks are blue and reverse blocks red. Query contigs are stacked in labelled bands.
+
+How samples are flagged:
+
+- **Relative flags.** A sample is flagged when its robust z-score (median/MAD) passes 3.5 in the bad direction. Low coverage or identity is bad; high gap fraction, overlap, block count or breakpoints per Gb is bad. Each metric's scale has a floor, so near-constant cohorts aren't flagged for trivial differences. Relative flags need at least 5 samples.
+- **Absolute thresholds.** These are optional and off by default, because expected identity and fragmentation depend on divergence.
+
+QC config keys (all optional):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `query_fai_dir` | unset | Directory of query `.fai` files named `<sample>.fai`, `<sample>.fa.fai`, `<sample>.fasta.fai`, `<sample>.fna.fai`, `<sample>.fa.gz.fai` or `<sample>.fasta.gz.fai`. When set, every sample needs exactly one. Without it, query coverage uses only query contigs present in the MAF, which **overstates** coverage; the report marks this with †. |
+| `maf_stats_min_block_bp` | `0` | Blocks shorter than this (reference span) are ignored when counting breakpoints only. |
+| `maf_stats_overlap_tolerance_bp` | `0` | Reference overlap allowed between adjacent same-strand blocks before they count as out of order. |
+| `maf_stats_dotplots` | `flagged` | `flagged` (reference contigs with breakpoints, densest first), `all`, or `false`. |
+| `maf_stats_dotplot_max` | `20` | Cap on `flagged` plots per sample; `0` = no cap. |
+| `maf_stats_flag_min_reference_coverage`, `maf_stats_flag_min_identity`, `maf_stats_flag_max_gap_fraction`, `maf_stats_flag_max_breakpoints_per_gb` | unset | Absolute flag thresholds (percentages, or breakpoints per Gb). |
+| `maf_stats_threads`, `maf_stats_mem_mb`, `maf_stats_time` | `1`, `16000`, `12:00:00` | Per-sample job resources. **Placeholders**: not yet benchmarked on production-size MAFs. |
+| `maf_stats_report_mem_mb`, `maf_stats_report_time` | `4000`, `00:30:00` | Report job resources. |
+
+`scripts/maf_dotplot.py` also works on its own for quick plots: `python scripts/maf_dotplot.py --maf S.maf.gz --reference-fai ref.fa.fai --out-dir plots`. It exits non-zero if any input fails.
+
 ### Try it on the bundled example
 
 `example_data/` ships with a small simulated dataset (`example.maf/`, `example.reference.fa`) and a matching `options.yaml`. From the repo root:

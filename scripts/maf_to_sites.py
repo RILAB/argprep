@@ -16,17 +16,28 @@ import mmap
 import sys
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable
 
 import numpy as np
 
 try:
-    from scripts.common import merge_intervals, normalize_contig, open_text
+    from scripts.common import (  # noqa: F401  (MafRecord/iter_maf_blocks re-exported)
+        MafRecord,
+        iter_maf_blocks,
+        merge_intervals,
+        normalize_contig,
+        open_text,
+    )
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.common import merge_intervals, normalize_contig, open_text
+    from scripts.common import (  # noqa: F401  (MafRecord/iter_maf_blocks re-exported)
+        MafRecord,
+        iter_maf_blocks,
+        merge_intervals,
+        normalize_contig,
+        open_text,
+    )
 
 
 NUC_TO_CODE = {
@@ -45,16 +56,6 @@ CODE_TO_BASE = {
 }
 VALID_BASES = {"A", "C", "G", "T"}
 MISSING_CODES = {0, 5, 7}
-
-
-@dataclass
-class MafRecord:
-    src: str
-    start: int
-    size: int
-    strand: str
-    src_size: int
-    text: str
 
 
 class QualityMask:
@@ -334,63 +335,6 @@ def read_contig_region(reference_fasta: Path, contig: str, start: int, end: int)
             f"Region [{start}, {end}) exceeds length {len(seq)} of '{contig}'"
         )
     return seq[start:end]
-
-
-def iter_maf_blocks(path: Path) -> Iterator[list[MafRecord]]:
-    def validate_block(records: list[MafRecord], line_number: int) -> list[MafRecord]:
-        lengths = {len(record.text) for record in records}
-        if len(lengths) > 1:
-            raise ValueError(
-                f"Malformed MAF block in {path} ending at line {line_number}: "
-                "alignment strings have unequal lengths"
-            )
-        return records
-
-    block: list[MafRecord] = []
-    with open_text(path, "rt", errors="ignore") as handle:
-        line_number = 0
-        for line_number, raw in enumerate(handle, start=1):
-            stripped = raw.strip()
-            if not stripped:
-                if block:
-                    yield validate_block(block, line_number)
-                    block = []
-                continue
-            if stripped.startswith("#"):
-                continue
-            parts = stripped.split()
-            if not parts:
-                continue
-            if parts[0] == "a":
-                if block:
-                    yield validate_block(block, line_number)
-                    block = []
-                continue
-            if parts[0] != "s":
-                continue
-            if len(parts) < 7:
-                raise ValueError(
-                    f"Malformed MAF sequence row in {path} at line {line_number}: "
-                    "expected 7 fields"
-                )
-            try:
-                block.append(
-                    MafRecord(
-                        src=parts[1],
-                        start=int(parts[2]),
-                        size=int(parts[3]),
-                        strand=parts[4],
-                        src_size=int(parts[5]),
-                        text=parts[6],
-                    )
-                )
-            except ValueError as exc:
-                raise ValueError(
-                    f"Malformed MAF sequence row in {path} at line {line_number}: "
-                    "start, size, and srcSize must be integers"
-                ) from exc
-    if block:
-        yield validate_block(block, line_number)
 
 
 def choose_sample_record(block: list[MafRecord], contig: str) -> tuple[MafRecord, MafRecord] | None:

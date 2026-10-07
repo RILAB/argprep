@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import gzip
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, TextIO
+from typing import Iterable, Iterator, TextIO
 
 
 def open_text(
@@ -93,3 +94,70 @@ def merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
         cur_start, cur_end = start, end
     merged.append((cur_start, cur_end))
     return merged
+
+
+@dataclass
+class MafRecord:
+    src: str
+    start: int
+    size: int
+    strand: str
+    src_size: int
+    text: str
+
+
+def iter_maf_blocks(path: Path) -> Iterator[list[MafRecord]]:
+    def validate_block(records: list[MafRecord], line_number: int) -> list[MafRecord]:
+        lengths = {len(record.text) for record in records}
+        if len(lengths) > 1:
+            raise ValueError(
+                f"Malformed MAF block in {path} ending at line {line_number}: "
+                "alignment strings have unequal lengths"
+            )
+        return records
+
+    block: list[MafRecord] = []
+    with open_text(path, "rt", errors="ignore") as handle:
+        line_number = 0
+        for line_number, raw in enumerate(handle, start=1):
+            stripped = raw.strip()
+            if not stripped:
+                if block:
+                    yield validate_block(block, line_number)
+                    block = []
+                continue
+            if stripped.startswith("#"):
+                continue
+            parts = stripped.split()
+            if not parts:
+                continue
+            if parts[0] == "a":
+                if block:
+                    yield validate_block(block, line_number)
+                    block = []
+                continue
+            if parts[0] != "s":
+                continue
+            if len(parts) < 7:
+                raise ValueError(
+                    f"Malformed MAF sequence row in {path} at line {line_number}: "
+                    "expected 7 fields"
+                )
+            try:
+                block.append(
+                    MafRecord(
+                        src=parts[1],
+                        start=int(parts[2]),
+                        size=int(parts[3]),
+                        strand=parts[4],
+                        src_size=int(parts[5]),
+                        text=parts[6],
+                    )
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Malformed MAF sequence row in {path} at line {line_number}: "
+                    "start, size, and srcSize must be integers"
+                ) from exc
+    if block:
+        yield validate_block(block, line_number)

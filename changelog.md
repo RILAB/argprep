@@ -7,6 +7,29 @@ carry forward to the v1.x series.
 
 ## Unreleased
 
+### First-stage MAF QC: `maf_qc` target ([#33](https://github.com/RILAB/argprep/issues/33))
+
+- New QC-only target, `snakemake ... maf_qc`. It runs [scripts/maf_stats.py](scripts/maf_stats.py) as one SLURM job per sample, then [scripts/maf_stats_report.py](scripts/maf_stats_report.py) as one small report job. Outputs go to `results/maf_stats/`.
+- It is not part of `rule all`. The main workflow neither runs it nor depends on it, so inspecting QC and starting the main run are separate decisions.
+- Metrics:
+  - reference coverage and query coverage (query `.fai` via `query_fai_dir`, or MAF `srcSize` labelled as such);
+  - aligned bp;
+  - identity and gap fraction;
+  - block count, block N50, and overlapping reference bp;
+  - strand flips, reference-contig jumps and out-of-order blocks, each counted independently;
+  - unique breakpoint adjacencies, and breakpoints per Gb covered.
+- Strict validation of pairwise MAF structure, coordinates, source sizes and reference names.
+- Cross-sample flags: direction-aware robust z-scores with per-metric scale floors (needs at least 5 samples), plus optional absolute thresholds.
+- [scripts/maf_dotplot.py](scripts/maf_dotplot.py) is refactored and now used by QC:
+  - reads `.maf.gz`;
+  - pairs rows by block through the shared validated parser;
+  - stacks query contigs in labelled bands;
+  - writes fixed-size PNGs with batched line drawing;
+  - exits non-zero when an input fails.
+- `MafRecord` and `iter_maf_blocks` moved from `maf_to_sites.py` to `common.py` so there is one MAF parser; `maf_to_sites` re-exports both.
+- `matplotlib` added to `argprep.yml` (and so to the containers).
+- `prepare_reference` and `index_reference` now request explicit small SLURM resources instead of the profile's 20 GB / 48 h default.
+
 ### New auxiliary script: gapped alignment FASTA from the MAFs
 
 - Added [scripts/maf_to_fasta.py](scripts/maf_to_fasta.py), which builds a true

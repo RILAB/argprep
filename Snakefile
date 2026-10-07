@@ -1,3 +1,4 @@
+import re
 import sys
 import shlex
 from pathlib import Path
@@ -77,6 +78,30 @@ if SUMMARY_WINDOW_BP <= 0:
         f"summary_window_bp must be a positive integer; got {SUMMARY_WINDOW_BP}"
     )
 
+# First-stage MAF QC (`snakemake ... maf_qc`); never part of `rule all`.
+MAF_STATS_DIR = RESULTS_DIR / "maf_stats"
+QUERY_FAI_DIR = config.get("query_fai_dir")
+QUERY_FAI_DIR = None if QUERY_FAI_DIR in (None, "") else Path(QUERY_FAI_DIR).resolve()
+MAF_STATS_MIN_BLOCK_BP = int(config.get("maf_stats_min_block_bp", 0))
+MAF_STATS_OVERLAP_TOLERANCE_BP = int(config.get("maf_stats_overlap_tolerance_bp", 0))
+MAF_STATS_DOTPLOTS = str(config.get("maf_stats_dotplots", "flagged"))
+if MAF_STATS_DOTPLOTS in ("False", "false", "0"):  # YAML `false` arrives as a bool
+    MAF_STATS_DOTPLOTS = "false"
+if MAF_STATS_DOTPLOTS not in ("flagged", "all", "false"):
+    raise ValueError(
+        f"maf_stats_dotplots must be flagged, all, or false; got {MAF_STATS_DOTPLOTS!r}"
+    )
+MAF_STATS_DOTPLOT_MAX = int(config.get("maf_stats_dotplot_max", 20))
+MAF_STATS_FLAG_OPTIONS = {
+    "--flag-min-reference-coverage": config.get("maf_stats_flag_min_reference_coverage"),
+    "--flag-min-identity": config.get("maf_stats_flag_min_identity"),
+    "--flag-max-gap-fraction": config.get("maf_stats_flag_max_gap_fraction"),
+    "--flag-max-breakpoints-per-gb": config.get("maf_stats_flag_max_breakpoints_per_gb"),
+}
+# Placeholder resources until real MAFs are benchmarked; override in the config.
+MAF_STATS_DEFAULT_MEM_MB = 16000
+MAF_STATS_DEFAULT_TIME = "12:00:00"
+
 DIRECT_REF_FASTA = RESULTS_DIR / "refs" / "reference_sites.fa"
 REF_FAI = str(DIRECT_REF_FASTA) + ".fai"
 MAF_CHUNK_ROOT = RESULTS_DIR / "maf_by_contig"
@@ -101,6 +126,26 @@ def _quality_bed_for_sample(sample: str) -> Path | None:
     if gz.exists():
         return gz
     return None
+
+
+QUERY_FAI_SUFFIXES = (".fai", ".fa.fai", ".fasta.fai", ".fna.fai", ".fa.gz.fai", ".fasta.gz.fai")
+
+
+def _query_fai_for_sample(sample: str) -> list[str]:
+    """`<sample>` + one of QUERY_FAI_SUFFIXES under query_fai_dir; [] when the
+    option is unset. Missing or ambiguous files are errors, so query coverage
+    never silently mixes denominator sources across samples."""
+    if QUERY_FAI_DIR is None:
+        return []
+    found = [QUERY_FAI_DIR / f"{sample}{suffix}" for suffix in QUERY_FAI_SUFFIXES]
+    found = [path for path in found if path.exists()]
+    if len(found) != 1:
+        problem = "No" if not found else "Multiple"
+        raise ValueError(
+            f"{problem} query .fai for sample '{sample}' in {QUERY_FAI_DIR} "
+            f"(looked for {sample}{{{','.join(QUERY_FAI_SUFFIXES)}}})"
+        )
+    return [str(found[0])]
 
 
 def _quality_bed_inputs():
@@ -312,6 +357,9 @@ ruleorder: combine_sample_missing_masks > direct_maf_sites
 
 
 rule prepare_reference:
+    resources:
+        mem_mb=1000,
+        time="00:10:00",
     input:
         ref=str(ORIG_REF_FASTA),
     output:
@@ -325,6 +373,9 @@ rule prepare_reference:
 
 
 checkpoint index_reference:
+    resources:
+        mem_mb=4000,
+        time="02:00:00",
     input:
         ref=str(DIRECT_REF_FASTA),
     output:
@@ -481,3 +532,85 @@ rule summary_report:
           --sample-missing-beds {input.sample_missing_beds} \
           --options-yaml "{input.options_yaml}"
         """
+
+
+rule maf_stats:
+    threads: int(config.get("maf_stats_threads", 1))
+    resources:
+        mem_mb=int(config.get("maf_stats_mem_mb") or MAF_STATS_DEFAULT_MEM_MB),
+        time=str(config.get("maf_stats_time") or MAF_STATS_DEFAULT_TIME),
+    wildcard_constraints:
+        sample="|".join(re.escape(sample) for sample in SAMPLES),
+    input:
+        maf=lambda wc: _maf_input(wc.sample),
+        fai=REF_FAI,
+        query_fai=lambda wc: _query_fai_for_sample(wc.sample),
+    output:
+        summary=str(MAF_STATS_DIR / "{sample}.maf_stats.tsv"),
+        by_reference=str(MAF_STATS_DIR / "{sample}.by_reference_contig.tsv"),
+        by_query=str(MAF_STATS_DIR / "{sample}.by_query_contig.tsv"),
+        dotplots=directory(str(MAF_STATS_DIR / "dotplots" / "{sample}")),
+    params:
+        out_dir=str(MAF_STATS_DIR),
+        min_block_bp=MAF_STATS_MIN_BLOCK_BP,
+        overlap_tolerance_bp=MAF_STATS_OVERLAP_TOLERANCE_BP,
+        dotplots=MAF_STATS_DOTPLOTS,
+        dotplot_max=MAF_STATS_DOTPLOT_MAX,
+    shell:
+        """
+        set -euo pipefail
+        cmd=(python "{workflow.basedir}/scripts/maf_stats.py"
+          --maf "{input.maf}"
+          --reference-fai "{input.fai}"
+          --sample "{wildcards.sample}"
+          --out-dir "{params.out_dir}"
+          --min-block-bp "{params.min_block_bp}"
+          --overlap-tolerance-bp "{params.overlap_tolerance_bp}"
+          --dotplots "{params.dotplots}"
+          --dotplot-max "{params.dotplot_max}")
+        if [ -n "{input.query_fai}" ]; then
+          cmd+=(--query-fai "{input.query_fai}")
+        fi
+        "${{cmd[@]}}"
+        """
+
+
+rule maf_stats_report:
+    resources:
+        mem_mb=int(config.get("maf_stats_report_mem_mb", 4000)),
+        time=str(config.get("maf_stats_report_time", "00:30:00")),
+    input:
+        summaries=expand(str(MAF_STATS_DIR / "{sample}.maf_stats.tsv"), sample=SAMPLES),
+        by_reference=expand(str(MAF_STATS_DIR / "{sample}.by_reference_contig.tsv"), sample=SAMPLES),
+        by_query=expand(str(MAF_STATS_DIR / "{sample}.by_query_contig.tsv"), sample=SAMPLES),
+        dotplots=expand(str(MAF_STATS_DIR / "dotplots" / "{sample}"), sample=SAMPLES),
+    output:
+        tsv=str(MAF_STATS_DIR / "maf_stats.tsv"),
+        html=str(MAF_STATS_DIR / "maf_stats.html"),
+    params:
+        flag_args=" ".join(
+            f"{option} {shlex.quote(str(value))}"
+            for option, value in MAF_STATS_FLAG_OPTIONS.items()
+            if value not in (None, "")
+        ),
+    shell:
+        """
+        set -euo pipefail
+        python "{workflow.basedir}/scripts/maf_stats_report.py" \
+          --summaries {input.summaries:q} \
+          --by-reference {input.by_reference:q} \
+          --by-query {input.by_query:q} \
+          --out-tsv "{output.tsv}" \
+          --out-html "{output.html}" \
+          {params.flag_args}
+        """
+
+
+# QC-only target: run and inspect before launching the main workflow.
+rule maf_qc:
+    input:
+        str(MAF_STATS_DIR / "maf_stats.tsv"),
+        str(MAF_STATS_DIR / "maf_stats.html"),
+        expand(str(MAF_STATS_DIR / "{sample}.by_reference_contig.tsv"), sample=SAMPLES),
+        expand(str(MAF_STATS_DIR / "{sample}.by_query_contig.tsv"), sample=SAMPLES),
+        expand(str(MAF_STATS_DIR / "dotplots" / "{sample}"), sample=SAMPLES),

@@ -853,3 +853,83 @@ def test_workflow_requires_expected_config_keys(tmp_path: Path, missing_key: str
     result = _run_snakemake(tmp_path, config, str(tmp_path / "results" / "summary.html"))
     assert result.returncode != 0
     assert f"Missing required config keys: {missing_key}" in (result.stderr + result.stdout)
+
+
+def _maf_qc_fixture(tmp_path: Path, *extra_config: str) -> Path:
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">1\nACGTACGTAC\n", encoding="utf-8")
+    maf_dir = tmp_path / "maf"
+    maf_dir.mkdir()
+    _write_pairwise_maf(maf_dir / "s1.maf", "1", "ACGTACGTAC", "s1", "ACGTACGTAC")
+    _write_pairwise_maf(maf_dir / "s2.maf", "1", "ACGTACGTAC", "s2", "ACGAACGTAC")
+    config = tmp_path / "config.yaml"
+    _write_config(
+        config,
+        "maf_dir: maf",
+        "reference_fasta: ref.fa",
+        "results_dir: results",
+        'samples: ["s1", "s2"]',
+        "maf_stats_dotplots: all",
+        *extra_config,
+    )
+    return config
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+def test_maf_qc_target_builds_stats_report_and_dotplots_only(tmp_path: Path) -> None:
+    config = _maf_qc_fixture(tmp_path)
+    result = _run_snakemake(tmp_path, config, "maf_qc")
+    assert result.returncode == 0, result.stderr
+
+    stats = tmp_path / "results" / "maf_stats"
+    for sample in ("s1", "s2"):
+        for suffix in ("maf_stats.tsv", "by_reference_contig.tsv", "by_query_contig.tsv"):
+            assert (stats / f"{sample}.{suffix}").exists()
+        assert (stats / "dotplots" / sample / "1.png").exists()
+    rows = (stats / "maf_stats.tsv").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 3 and rows[0].split("\t")[-1] == "flags"
+    html = (stats / "maf_stats.html").read_text(encoding="utf-8")
+    assert "dotplots/s1/1.png" in html
+    # QC never starts the main analysis.
+    assert not (tmp_path / "results" / "sites").exists()
+    assert not (tmp_path / "results" / "maf_by_contig").exists()
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+def test_default_target_does_not_run_maf_qc(tmp_path: Path) -> None:
+    config = _maf_qc_fixture(tmp_path)
+    result = _run_snakemake(tmp_path, config)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "results" / "summary.html").exists()
+    assert not (tmp_path / "results" / "maf_stats").exists()
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+def test_maf_qc_uses_query_fai_dir_and_requires_every_sample(tmp_path: Path) -> None:
+    fai_dir = tmp_path / "query_fai"
+    fai_dir.mkdir()
+    (fai_dir / "s1.fa.fai").write_text("s1\t10\t4\t10\t11\nscaffold\t30\t20\t30\t31\n", encoding="utf-8")
+    config = _maf_qc_fixture(tmp_path, "query_fai_dir: query_fai")
+
+    missing = _run_snakemake(tmp_path, config, "maf_qc")
+    assert missing.returncode != 0
+    assert "No query .fai for sample 's2'" in (missing.stderr + missing.stdout)
+
+    (fai_dir / "s2.fai").write_text("s2\t10\t4\t10\t11\n", encoding="utf-8")
+    result = _run_snakemake(tmp_path, config, "maf_qc")
+    assert result.returncode == 0, result.stderr
+    header, row = (tmp_path / "results" / "maf_stats" / "s1.maf_stats.tsv").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    values = dict(zip(header.split("\t"), row.split("\t")))
+    assert values["query_length_source"] == "query_fai"
+    assert values["query_length_bp"] == "40"
