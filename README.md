@@ -10,7 +10,7 @@ Ross-Ibarra, J. 2026. ARGprep: A pipeline to prepare pairwise whole-genome align
 
 If your use case is pairwise variant discovery (SNPs, large indels, inversions) rather than ARG-ready all-sites output, [wgatools](https://github.com/wjwei-handsome/wgatools) is a potential alternative. See [WGATOOLS_COMPARISON.md](WGATOOLS_COMPARISON.md) for a detailed comparison of the two approaches.
 
-> **Which version to use:** check out the most recent tagged commit (e.g. `git checkout v1.9`) rather than an older release. See [changelog.md](changelog.md) for a per-version breakdown of changes.
+> **Which version to use:** for production runs, check out the most recent stable release (`git checkout v1.10`). `v1.11-beta.1` is a pre-release that adds the [`maf_qc` alignment-QC stage](#check-alignment-quality-first-maf_qc-beta) for testing; feedback is welcome via [GitHub issues](https://github.com/RILAB/argprep/issues). See [changelog.md](changelog.md) for a per-version breakdown of changes.
 
 ## Requirements
 
@@ -166,7 +166,9 @@ snakemake --profile profiles/slurm --configfile options.yaml --rerun-incomplete
 
 When using the SLURM profile, set `slurm_account` and `slurm_partition` in your config file. Slurm defaults for other resources are defined in `profiles/slurm/config.yaml`. Parsing the MAFs is the most computationally expensive step in the pipeline, and direct-maf rule resources can be overridden in `options.yaml` (`maf_mem_mb`, `maf_time`). Site calling is single-threaded, so each per-contig job requests one core.
 
-### Check alignment quality first (`maf_qc`)
+### Check alignment quality first (`maf_qc`, beta)
+
+> **Beta (v1.11-beta.1):** metric definitions, flag thresholds, the report layout and output columns may change after user feedback.
 
 Before the expensive per-contig run, check each input MAF with the QC-only target:
 

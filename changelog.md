@@ -1,13 +1,20 @@
 # Changelog
 
-Versions are git tags; check out the most recent (e.g. `git checkout v1.9`).
+Versions are git tags. For production runs, check out the most recent **stable**
+release (`git checkout v1.10`). Tags with a `-beta.N` suffix are pre-releases
+for testing new features: `v1.11-beta.1` adds the `maf_qc` alignment-QC stage,
+and feedback on it is welcome.
 v1.0 was a full rewrite from the legacy TASSEL/gVCF/GATK pipeline — the
 pre-v1.0 (`v0.x`) entries at the bottom describe that older lineage and do not
 carry forward to the v1.x series.
 
-## Unreleased
+## v1.11-beta.1 (pre-release)
 
-### First-stage MAF QC: `maf_qc` target ([#33](https://github.com/RILAB/argprep/issues/33))
+The new `maf_qc` stage is in **beta**: metric definitions, flag thresholds, the
+report layout and the output columns may change after user feedback. The rest of
+this release is stable.
+
+### First-stage MAF QC: `maf_qc` target ([#33](https://github.com/RILAB/argprep/issues/33)) — beta
 
 - New QC-only target, `snakemake ... maf_qc`. It runs [scripts/maf_stats.py](scripts/maf_stats.py) as one SLURM job per sample, then [scripts/maf_stats_report.py](scripts/maf_stats_report.py) as one small report job. Outputs go to `results/maf_stats/`.
 - It is not part of `rule all`. The main workflow neither runs it nor depends on it, so inspecting QC and starting the main run are separate decisions.
@@ -36,7 +43,17 @@ carry forward to the v1.x series.
   - Everything else in collapsed sections.
   - `maf_stats.tsv` gains `status` and `unusual` columns.
   - `overlapping_reference_bp` and `reference_contig_jumps` are reported but not flagged (0 for every sample under AnchorWave's one-to-one alignment); unaligned sequence is flagged when high.
+- The QC rules pass a hash of their scripts as a param, so updating ARGprep reruns QC instead of keeping stale outputs.
+- Tested on 8 NAM maize lines (with assembly FASTAs) and 8 teosintes (MAF only) against B73 v5.
+
+### Other changes
+
+- New output `sites/combined.<contig>.sample.mask.bed`: the per-sample missing BEDs for each contig concatenated into one file, labelled by sample ([#32](https://github.com/RILAB/argprep/issues/32)). It is grouped by sample, not coordinate-sorted, and is not a merged mask. Follow-ups are tracked in [#34](https://github.com/RILAB/argprep/issues/34).
+- MAF blocks whose reference row is on the minus strand are now rejected with an error. `maf_to_sites.py` and `maf_to_fasta.py` would previously have placed them at the wrong reference coordinates without warning; AnchorWave never writes them ([#35](https://github.com/RILAB/argprep/issues/35)).
 - `prepare_reference` and `index_reference` now request explicit small SLURM resources instead of the profile's 20 GB / 48 h default.
+- Open work moved from `reports/backlog.md` to [GitHub issues](https://github.com/RILAB/argprep/issues); see `reports/code_review/2026-10.md` for the latest review.
+
+## v1.10
 
 ### New auxiliary script: gapped alignment FASTA from the MAFs
 

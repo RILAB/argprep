@@ -1,3 +1,4 @@
+import hashlib
 import re
 import sys
 import shlex
@@ -105,6 +106,21 @@ MAF_STATS_FLAG_OPTIONS = {
     "--flag-min-identity": config.get("maf_stats_flag_min_identity"),
     "--flag-max-breakpoints-per-gb": config.get("maf_stats_flag_max_breakpoints_per_gb"),
 }
+
+
+def _code_hash(*relpaths: str) -> str:
+    """Short hash of the scripts a rule runs. Passed as a param so Snakemake
+    (whose default rerun triggers include params) redoes the job when the code
+    changes; scripts called from `shell` are otherwise not tracked."""
+    digest = hashlib.sha256()
+    for relpath in relpaths:
+        digest.update((Path(workflow.basedir) / relpath).read_bytes())
+    return digest.hexdigest()[:16]
+
+
+MAF_STATS_CODE = _code_hash("scripts/maf_stats.py", "scripts/maf_dotplot.py", "scripts/common.py")
+MAF_STATS_REPORT_CODE = _code_hash("scripts/maf_stats_report.py", "scripts/common.py")
+
 # Placeholder resources until real MAFs are benchmarked; override in the config.
 MAF_STATS_DEFAULT_MEM_MB = 16000
 MAF_STATS_DEFAULT_TIME = "12:00:00"
@@ -586,6 +602,7 @@ rule maf_stats:
         dotplots=MAF_STATS_DOTPLOTS,
         dotplot_max=MAF_STATS_DOTPLOT_MAX,
         breakpoint_context_bp=MAF_STATS_BREAKPOINT_CONTEXT_BP,
+        code=MAF_STATS_CODE,
     shell:
         """
         set -euo pipefail
@@ -626,6 +643,7 @@ rule maf_stats_report:
         nested=str(MAF_STATS_DIR / "maf_stats.nested_blocks.tsv"),
     params:
         recurrence_window_bp=MAF_STATS_RECURRENCE_WINDOW_BP,
+        code=MAF_STATS_REPORT_CODE,
         flag_args=" ".join(
             f"{option} {shlex.quote(str(value))}"
             for option, value in MAF_STATS_FLAG_OPTIONS.items()

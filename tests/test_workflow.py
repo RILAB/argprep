@@ -969,3 +969,16 @@ def test_query_fasta_dir_and_query_fai_dir_are_exclusive(tmp_path: Path) -> None
     result = _run_snakemake(tmp_path, config, "maf_qc")
     assert result.returncode != 0
     assert "not both" in (result.stderr + result.stdout)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+def test_maf_qc_code_hash_param_is_stable_between_runs(tmp_path: Path) -> None:
+    config = _maf_qc_fixture(tmp_path)
+    first = _run_snakemake(tmp_path, config, "maf_qc")
+    assert first.returncode == 0, first.stderr
+    second = _run_snakemake(tmp_path, config, "maf_qc")
+    assert second.returncode == 0, second.stderr
+    assert "Nothing to be done" in (second.stderr + second.stdout)
