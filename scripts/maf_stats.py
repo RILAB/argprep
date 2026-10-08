@@ -85,9 +85,11 @@ TELOMERE_WINDOW_BP = 1_000
 TELOMERE_MIN_FRACTION = 0.5
 # N runs at least this long are scaffold gaps; shorter runs are ambiguous bases.
 MIN_GAP_N = 10
-# "Major" sequences: the largest ones that together cover this share of the
-# assembly (chromosome-scale scaffolds in a chromosome-level assembly).
-MAJOR_SEQUENCE_FRACTION = 0.95
+# "Major" sequences: at least this fraction of the longest sequence's length.
+# Picks out the chromosomes of a chromosome-level assembly however much small
+# unplaced-scaffold sequence it also carries (a share-of-assembly cut-off does
+# not: 7% of debris pulled 74 scaffolds into a 95% cover).
+MAJOR_MIN_FRACTION_OF_LONGEST = 0.10
 _TELOMERE_FORWARD = b"TTTAGGG"
 _TELOMERE_REVERSE = b"CCCTAAA"
 
@@ -833,16 +835,10 @@ def _assembly_summary(
 
 
 def major_sequences(assembly: dict[str, AssemblyContig]) -> set[str]:
-    """Largest sequences that together cover MAJOR_SEQUENCE_FRACTION of the assembly."""
-    total = sum(c.length for c in assembly.values())
-    chosen: set[str] = set()
-    running = 0
-    for name, contig in sorted(assembly.items(), key=lambda item: (-item[1].length, item[0])):
-        if running >= MAJOR_SEQUENCE_FRACTION * total:
-            break
-        chosen.add(name)
-        running += contig.length
-    return chosen
+    """Sequences at least MAJOR_MIN_FRACTION_OF_LONGEST of the longest one's length."""
+    longest = max(c.length for c in assembly.values())
+    cutoff = MAJOR_MIN_FRACTION_OF_LONGEST * longest
+    return {name for name, contig in assembly.items() if contig.length >= cutoff}
 
 
 def compute_stats(

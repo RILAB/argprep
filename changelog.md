@@ -29,6 +29,13 @@ carry forward to the v1.x series.
   - Each breakpoint is located on its query contig (`contig_end`, `n_gap` with the FASTA, or `interior`) and checked for recurrence across samples (`maf_stats_recurrence_window_bp`). New outputs: `<sample>.breakpoints.tsv` and `maf_stats.breakpoints.tsv`.
   - Block comparisons are chunked, to bound memory on chromosome-scale blocks.
 - `matplotlib` added to `argprep.yml` (and so to the containers).
+- Report leads with a short summary:
+  - Per-sample status: ✔ normal, ⚠ review (bad-direction outlier or absolute threshold), ◆ unusual (large deviation in the good direction, e.g. far closer to the reference than the rest; check for admixture, contamination or mislabelling).
+  - Plain-language reasons that point to contigs, coordinates and dotplots.
+  - A compact sample table and a shared-features table (breakpoints and nested blocks recurring across samples).
+  - Everything else in collapsed sections.
+  - `maf_stats.tsv` gains `status` and `unusual` columns.
+  - `overlapping_reference_bp` and `reference_contig_jumps` are reported but not flagged (0 for every sample under AnchorWave's one-to-one alignment); unaligned sequence is flagged when high.
 - `prepare_reference` and `index_reference` now request explicit small SLURM resources instead of the profile's 20 GB / 48 h default.
 
 ### New auxiliary script: gapped alignment FASTA from the MAFs

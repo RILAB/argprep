@@ -21,9 +21,12 @@ from scripts.maf_stats_report import (  # noqa: E402
     annotate_nested_recurrence,
     annotate_recurrence,
     build_report,
+    cluster_shared_features,
     compute_flags,
+    compute_status,
     format_flags,
     load_inputs,
+    metric_sentence,
     recurrence_counts,
 )
 
@@ -299,9 +302,10 @@ def test_one_row_per_sample_in_input_order(tmp_path):
     header = (tmp_path / "out" / "maf_stats.tsv").read_text().split("\n")[0].split("\t")
     assert header == SUMMARY_COLUMNS + [
         "breakpoints_recurrent", "breakpoints_private", "nested_recurrent", "nested_private",
-        "flags",
+        "status", "unusual", "flags",
     ]
-    assert header == OUTPUT_SUMMARY_COLUMNS + ["flags"]
+    assert header == OUTPUT_SUMMARY_COLUMNS + ["status", "unusual", "flags"]
+    assert all(r["status"] == "ok" and r["unusual"] == "" for r in out)
     # Values pass through unchanged.
     assert out[1]["aligned_reference_bp"] == "360000000"
     assert out[1]["assembly_length_bp"] == "NA"
@@ -325,25 +329,34 @@ def test_low_is_bad_outlier_flagged_and_high_outlier_not(tmp_path):
     result, out, _ = run_report(tmp_path, rows)
     assert "aligned_reference_pct" in result.flags[2]
     assert out[2]["flags"].startswith("aligned_reference_pct:robust_z=-")
-    # A high aligned-reference outlier is good, not flagged.
+    # A high aligned-reference outlier is good, not flagged: it is "unusual".
     assert "aligned_reference_pct" not in result.flags[5]
     assert "aligned_reference_pct" not in out[5]["flags"]
+    assert out[5]["unusual"].startswith("aligned_reference_pct:robust_z=")
+    assert out[5]["status"] == "unusual"
+    assert out[2]["status"] == "review" and out[2]["unusual"] == ""
 
 
 def test_high_is_bad_outlier_flagged_and_low_not():
     rows = cohort(
         8,
-        s1={"overlapping_reference_bp": "50000000", "reference_contig_jumps": "40",
-            "breakpoints_per_gb_aligned": "400"},
-        s4={"overlapping_reference_bp": "0", "reference_contig_jumps": "0",
-            "breakpoints_per_gb_aligned": "0"},
+        s1={"overlapping_query_bp": "50000000", "breakpoints_private": "40",
+            "breakpoints_per_gb_aligned": "400", "unaligned_contig_bp": "900000000"},
+        s4={"overlapping_query_bp": "0", "breakpoints_private": "0",
+            "breakpoints_per_gb_aligned": "0", "unaligned_contig_bp": "0"},
     )
+    for row in rows:  # cohort() leaves these unset; give every sample a baseline
+        row.setdefault("breakpoints_private", "1")
+        if row["sample"] not in ("S1", "S4"):
+            row["breakpoints_private"] = "1"
+            row["unaligned_contig_bp"] = "90000000"
     result = compute_flags(rows)
-    for metric in ("overlapping_reference_bp", "reference_contig_jumps", "breakpoints_per_gb_aligned"):
+    for metric in ("overlapping_query_bp", "breakpoints_private", "breakpoints_per_gb_aligned",
+                   "unaligned_contig_bp"):
         assert metric in result.flags[1], metric
         assert result.flags[1][metric][0].startswith("robust_z=")
         assert metric not in result.flags[4], metric
-    z = float(result.flags[1]["reference_contig_jumps"][0].split("=")[1].split("(")[0])
+    z = float(result.flags[1]["breakpoints_private"][0].split("=")[1].split("(")[0])
     assert z > 3.5
 
 
@@ -353,13 +366,15 @@ def test_flag_directions_match_spec():
         "aligned_query_pct": "low",
         "identity_pct": "low",
         "assembly_contig_n50_bp": "low",
-        "overlapping_reference_bp": "high",
         "overlapping_query_bp": "high",
         "breakpoints_per_gb_aligned": "high",
-        "reference_contig_jumps": "high",
         "breakpoints_private": "high",
         "assembly_n_pct": "high",
+        "unaligned_contig_bp": "high",
     }
+    # Constant (0) under one-to-one aligners: reported, never flagged or plotted.
+    assert "overlapping_reference_bp" not in FLAG_DIRECTIONS
+    assert "reference_contig_jumps" not in FLAG_DIRECTIONS
     assert "nested_blocks" not in FLAG_DIRECTIONS
     assert "nested_private" not in FLAG_DIRECTIONS
 
@@ -496,7 +511,8 @@ def test_strip_plots_only_for_metrics_with_values(tmp_path):
     # No assembly data; 5 samples -> breakpoints_private is 0 (not NA).
     rows = cohort(5)
     _, _, page = run_report(tmp_path, rows)
-    with_values = [m for m in FLAG_DIRECTIONS if not m.startswith("assembly_")]
+    # assembly_* and unaligned_* need a FASTA, so they are NA here
+    with_values = [m for m in FLAG_DIRECTIONS if not m.startswith(("assembly_", "unaligned_"))]
     assert page.count('<svg class="strip"') == len(with_values)
     assert 'aria-label="Contig N50 (bp)"' not in page
     # One sample -> breakpoints_private NA -> no plot for it either.
@@ -671,7 +687,7 @@ def test_combined_breakpoints_tsv_and_summary_counts(tmp_path):
         ("1", "1"), ("1", "0"), ("0", "0"),
     ]
     # Breakpoints section: explanations and the cross-sample table, recurrent first.
-    assert "<h2>Breakpoints</h2>" in page
+    assert "<summary>All breakpoints</summary>" in page
     assert "scaffold gap" in page and "cannot be distinguished without reads" in page
     table = page[page.index('<table class="bp-table">'):]
     table = table[: table.index("</table>")]
@@ -845,15 +861,24 @@ def test_html_alignment_table_and_flag_highlighting(tmp_path):
     assert re.search(
         r'<td class="flag" title="aligned_reference_pct:robust_z=-[\d.]+">10\.00</td>', page
     )
-    table = page[page.index('<table class="samples">'):]
+    # Full alignment table (drill-down) keeps every alignment column.
+    table = page[page.index('<table class="alignment">'):]
     header = table[: table.index("</tr>")]
     labels = re.findall(r"<th>([^<]*)</th>", header)
     assert labels == [
         "Sample", "Aligned ref (%)", "Aligned query (%)", "Identity (%)", "Insertion cols (%)",
         "Deletion cols (%)", "Strand flips", "Out-of-order adj.", "Ref-contig jumps",
         "Breakpoint adj.", "Recurrent breakpoints", "Private breakpoints", "Nested blocks",
-        "Recurrent nested", "Private nested", "Flags",
+        "Recurrent nested", "Private nested", "Unusual", "Flags",
     ]
+    # Compact table: the flagged cell carries the plain-language sentence.
+    compact = page[page.index('<table class="samples">'):]
+    compact = compact[: compact.index("</table>")]
+    assert re.search(
+        r'<td class="flag" title="Aligned reference 10\.0% vs cohort median 36\.\d% '
+        r'\(much lower than the rest; z=-[\d.]+\)">10\.00</td>',
+        compact,
+    )
     assert "maf_srcsize" in page and "overstates" in page
     assert "block_span_reference_bp" in page and "AnchorWave" in page
     assert "TTTAGGG" in page
@@ -1050,12 +1075,12 @@ def test_combined_nested_tsv_summary_columns_and_html(tmp_path):
     ]
     # Summary column order: breakpoint then nested recurrence columns before flags.
     header = (tmp_path / "out" / "maf_stats.tsv").read_text().split("\n")[0].split("\t")
-    assert header[-5:] == [
+    assert header[-7:] == [
         "breakpoints_recurrent", "breakpoints_private", "nested_recurrent", "nested_private",
-        "flags",
+        "status", "unusual", "flags",
     ]
     # HTML section: explanation, table with recurrent rows first, container shown.
-    assert "<h2>Nested (secondary/transposed) alignments</h2>" in page
+    assert "<summary>All nested blocks</summary>" in page
     assert "excluded from the breakpoint walk" in page
     assert "reference misassembly" in page
     table = page[page.index('<table class="nested-table">'):]
@@ -1159,3 +1184,280 @@ def test_definitions_cover_new_columns(tmp_path):
     nb = defs[defs.index("<dt>nested_blocks</dt>"):]
     nb = nb[: nb.index("</dd>")]
     assert "Flagged when" not in nb
+
+
+# ── status, plain-language summary and layout ───────────────────────────────
+
+
+def _section(page: str, start: str, end: str) -> str:
+    chunk = page[page.index(start):]
+    return chunk[: chunk.index(end)]
+
+
+def test_unusual_good_direction_not_flagged_and_status_precedence():
+    rows = cohort(
+        8,
+        s1={"aligned_reference_pct": "80.00"},  # good direction only -> unusual
+        s3={"identity_pct": "80.00", "aligned_reference_pct": "80.00"},  # both -> review
+    )
+    result = compute_flags(rows)
+    assert result.flags[1] == {}
+    assert result.unusual[1]["aligned_reference_pct"][0].startswith("robust_z=")
+    assert result.z_scores[1]["aligned_reference_pct"] > 3.5
+    assert "identity_pct" in result.flags[3]
+    assert "aligned_reference_pct" in result.unusual[3]
+    status = compute_status(result)
+    assert status[1] == "unusual"
+    assert status[3] == "review"  # review wins over unusual
+    assert status[0] == "ok" and status[5] == "ok"
+    assert result.status == status
+    assert format_flags(result.unusual[1]).startswith("aligned_reference_pct:robust_z=")
+    # High-is-bad metric far below the cohort is unusual, never a flag.
+    rows = cohort(8)
+    for r in rows:
+        r["overlapping_query_bp"] = "50000000"
+    rows[2]["overlapping_query_bp"] = "0"
+    result = compute_flags(rows)
+    assert "overlapping_query_bp" not in result.flags[2]
+    assert "overlapping_query_bp" in result.unusual[2]
+    # Absolute thresholds never produce "unusual".
+    result = compute_flags(cohort(3), thresholds={"identity_pct": 99.0})
+    assert all(not u for u in result.unusual)
+    assert all("identity_pct" in f for f in result.flags)
+
+
+def test_status_and_unusual_columns_in_tsv(tmp_path):
+    rows = cohort(8, s1={"aligned_reference_pct": "80.00"}, s2={"identity_pct": "80.00"})
+    _, out, _ = run_report(tmp_path, rows)
+    header = (tmp_path / "out" / "maf_stats.tsv").read_text().split("\n")[0].split("\t")
+    assert header[-3:] == ["status", "unusual", "flags"]
+    assert [r["status"] for r in out] == [
+        "ok", "unusual", "review", "ok", "ok", "ok", "ok", "ok"
+    ]
+    assert out[1]["flags"] == ""
+    assert out[1]["unusual"].startswith("aligned_reference_pct:robust_z=")
+    assert out[2]["flags"].startswith("identity_pct:robust_z=-")
+
+
+def test_metric_sentence_contains_value_median_and_direction():
+    rows = cohort(8, s1={"aligned_reference_pct": "52.60"})
+    result = compute_flags(rows)
+    text = metric_sentence(
+        "aligned_reference_pct", 52.6, result.stats["aligned_reference_pct"],
+        result.z_scores[1]["aligned_reference_pct"], result.unusual[1]["aligned_reference_pct"],
+        3.5,
+    )
+    assert text.startswith("Aligned reference 52.6% vs cohort median 36.")
+    assert "much higher than the rest; z=+" in text
+    text = metric_sentence(
+        "overlapping_query_bp", 48_118_418, result.stats["overlapping_query_bp"], 5.83,
+        ["robust_z=5.83"], 3.5,
+    )
+    assert text.startswith("48.1 Mb of query sequence aligned more than once vs median 800.0 kb")
+    assert "z=+5.8" in text
+    text = metric_sentence(
+        "identity_pct", 94.0, None, None, ["below_threshold_95"], 3.5
+    )
+    assert text == "Identity 94.00% (below the --flag-min-identity threshold of 95)"
+
+
+def test_review_card_sentence_pointer_and_escaping(tmp_path):
+    evil_contig = 'chr"<2>'
+    rows = cohort(8, s4={"overlapping_query_bp": "48118418"})
+    query = write_tsv(
+        tmp_path / "S4.by_query_contig.tsv", BY_QUERY_COLUMNS,
+        [dict(query_row("S4", evil_contig), overlapping_query_bp="25924348",
+              query_length_bp="244091922"),
+         query_row("S4", "chr3")],
+    )
+    ref = write_tsv(
+        tmp_path / "S4.by_reference_contig.tsv", BY_REFERENCE_COLUMNS,
+        [ref_row("S4", evil_contig, breakpoints=2, dotplot='dotplots/S4/chr"<2>.png')],
+    )
+    nb = nested_row("S4", (evil_contig, 94_000_000, 118_000_000), query_contig=evil_contig,
+                    container=(evil_contig, 121_000_000, 147_000_000))
+    nb.update(query_start="122000000", query_end="148000000")
+    nested = write_nested(tmp_path, "S4", [nb])
+    _, out, page = run_report(tmp_path, rows, ref=[ref], query=[query], nested=[nested])
+    assert out[4]["status"] == "review"
+    card = _section(page, "<h2>Needs review</h2>", "<h2>Samples</h2>")
+    assert '<div class="card review">' in card
+    assert '<a href="#s-4">S4</a>' in card
+    assert "48.1 Mb of query sequence aligned more than once vs median 800.0 kb" in card
+    assert "z=+" in card
+    # Pointer: top overlapping query contig and its largest nested block, escaped.
+    assert 'chr"<2>' not in page
+    assert "most on query contig chr&quot;&lt;2&gt; (25.9 Mb of 244.1 Mb)" in card
+    assert ("query chr&quot;&lt;2&gt;:122.0–148.0 Mb also aligns inverted to reference "
+            "chr&quot;&lt;2&gt;:94.0–118.0 Mb") in card
+    assert "inside a forward block on chr&quot;&lt;2&gt;:121.0–147.0 Mb" in card
+    assert 'src="dotplots/S4/chr&quot;&lt;2&gt;.png"' in card
+    # No unusual samples -> no Unusual section.
+    assert "<h2>Unusual</h2>" not in page
+
+
+def test_unusual_card_and_contig_pointer(tmp_path):
+    rows = cohort(8, s1={"aligned_reference_pct": "52.60"})
+    refs = []
+    for i, r in enumerate(rows):
+        contigs = []
+        for c in ("chr1", "chr2", "chr3"):
+            row = ref_row(r["sample"], c)
+            row["aligned_reference_pct"] = "37.00"
+            if i == 1:
+                row["aligned_reference_pct"] = {"chr1": "70.00", "chr2": "38.00", "chr3": "37.50"}[c]
+            contigs.append(row)
+        refs.append(write_tsv(tmp_path / f"{r['sample']}.by_reference_contig.tsv",
+                              BY_REFERENCE_COLUMNS, contigs))
+    _, out, page = run_report(tmp_path, rows, ref=refs)
+    assert out[1]["status"] == "unusual"
+    assert "<h2>Needs review</h2>" not in page
+    unusual = _section(page, "<h2>Unusual</h2>", "<h2>Samples</h2>")
+    assert "large deviation in the &ldquo;good&rdquo; direction" in unusual
+    assert "admixture" in unusual and "mislabelled" in unusual
+    assert '<div class="card unusual">' in unusual
+    assert "Aligned reference 52.6% vs cohort median" in unusual
+    assert "mostly chr1 70.0% vs 37.0%" in unusual
+    # Compact table: unusual cell shaded with its sentence.
+    compact = _section(page, '<table class="samples">', "</table>")
+    assert re.search(r'<td class="unusual" title="Aligned reference 52\.6%[^"]*">52\.60</td>',
+                     compact)
+    assert '<td class="status unusual"' in compact
+    assert '<circle class="dot unusual"' in page
+
+
+def test_summary_counts_and_no_cards_when_all_ok(tmp_path):
+    a = tmp_path / "a"
+    a.mkdir()
+    _, _, page = run_report(a, cohort(6))
+    assert "✔ 6 normal" in page and "⚠ 0 need review" in page
+    assert "◆ 0 unusual" in page
+    assert '<div class="card' not in page
+    assert "<h2>Needs review</h2>" not in page and "<h2>Unusual</h2>" not in page
+    assert "<title>ARGprep MAF QC — 6 samples</title>" in page
+    assert "no assembly FASTAs" in page
+    box = _section(page, '<div class="summary-box">', "</div>")
+    assert "Cohort: aligned reference 36.0–37.0%" in box
+    assert "15 breakpoints per sample" in box
+    assert "4 nested blocks per sample" in box
+
+    b = tmp_path / "b"
+    b.mkdir()
+    rows = cohort(8, s1={"aligned_reference_pct": "80.00"}, s2={"identity_pct": "80.00"},
+                  s3={"identity_pct": "80.00"})
+    _, _, page = run_report(b, rows)
+    box = _section(page, '<div class="summary-box">', "</div>")
+    assert "✔ 5 normal" in box and "⚠ 2 need review" in box
+    assert "◆ 1 unusual" in box
+    review = _section(page, "<h2>Needs review</h2>", "<h2>Unusual</h2>")
+    assert review.count('<div class="card review">') == 2
+    assert page.count('<div class="card unusual">') == 1
+
+
+def test_compact_table_columns_switch_with_assembly(tmp_path):
+    a = tmp_path / "a"
+    a.mkdir()
+    rows = cohort(5)
+    rows[0]["query_length_source"] = "maf_srcsize"
+    _, _, page = run_report(a, rows)
+    compact = _section(page, '<table class="samples">', "</table>")
+    labels = re.findall(r"<th>([^<]*)</th>", compact)
+    assert labels == [
+        "Status", "Sample", "Aligned ref %", "Aligned query %", "Identity %", "Breakpoints",
+        "Private breakpoints", "Nested blocks",
+    ]
+    assert "&dagger;" in compact
+
+    b = tmp_path / "b"
+    b.mkdir()
+    _, _, page = run_report(b, [summary_row(f"S{i}", assembly=True) for i in range(5)])
+    assert "assembly FASTAs used" in page
+    compact = _section(page, '<table class="samples">', "</table>")
+    labels = re.findall(r"<th>([^<]*)</th>", compact)
+    assert labels == [
+        "Status", "Sample", "Aligned ref %", "Identity %", "Breakpoints", "Nested blocks",
+        "Contig N50", "Telomeres",
+    ]
+    assert "<td>80.0 Mb</td>" in compact
+    assert "<td>14 / 20</td>" in compact
+
+
+def test_shared_feature_clustering():
+    samples = ["A", "B", "C", "D", "E"]
+    bps = annotate_recurrence(samples, {
+        "A": [bp_row("A", ("chr9", 110_500_000), ("chr9", 113_600_000))],
+        "B": [bp_row("B", ("chr9", 110_700_000), ("chr9", 113_500_000))],
+        # reversed orientation still matches
+        "C": [bp_row("C", ("chr9", 113_400_000), ("chr9", 110_600_000))],
+        "D": [bp_row("D", ("chr1", 1_000_000), ("chr1", 9_000_000))],  # private
+    }, 500_000)
+    nested = annotate_nested_recurrence(samples, {
+        s: [nested_row(s, ("chr6", 145_400_000 + i * 1000, 146_200_000))]
+        for i, s in enumerate(samples)
+    }, 500_000)
+    features = cluster_shared_features(samples, bps, nested, 500_000)
+    assert [(f.kind, len(f.samples)) for f in features] == [("nested block", 5), ("breakpoint", 3)]
+    nb, bp = features
+    assert nb.samples == samples and nb.rows == 5
+    assert nb.region.startswith("chr6:145.4")
+    assert bp.samples == ["A", "B", "C"]
+    assert bp.region == "chr9 110.5–110.7 Mb ↔ chr9 113.4–113.6 Mb"
+    assert bp.detail == "flip"
+    assert cluster_shared_features(["A"], bps[:1], [], 500_000) == []
+
+
+def test_shared_features_section(tmp_path):
+    rows = cohort(5)
+    bps = [write_breakpoints(tmp_path, f"S{i}", [
+        bp_row(f"S{i}", ("chr9", 110_500_000 + i * 10_000), ("chr9", 113_600_000))])
+        for i in range(3)]
+    nested = [write_nested(tmp_path, f"S{i}", [nested_row(f"S{i}", ("chr6", 1000, 5000))])
+              for i in range(5)]
+    _, _, page = run_report(tmp_path, rows, breakpoints=bps, nested=nested)
+    shared = _section(page, '<h2 id="shared">Shared features</h2>', "<h2>Details</h2>")
+    assert "real shared structure" in shared and "specific to the reference" in shared
+    table = _section(shared, '<table class="shared">', "</table>")
+    assert "<td>5/5</td><td class=\"left\">all</td>" in table
+    assert "<td>3/5</td>" in table
+    assert '<a href="#s-0">S0</a>, <a href="#s-1">S1</a>, <a href="#s-2">S2</a>' in table
+    assert table.index("5/5") < table.index("3/5")
+    assert "Shared by two or more samples: 1 breakpoint and 1 nested block" in page
+
+
+def test_shared_features_capped(tmp_path):
+    rows = cohort(5)
+    many = []
+    for s in ("S0", "S1"):
+        many.append(write_nested(tmp_path, s, [
+            nested_row(s, ("chr1", i * 10_000_000, i * 10_000_000 + 100)) for i in range(35)
+        ]))
+    _, _, page = run_report(tmp_path, rows, nested=many)
+    assert "Showing the 30 largest of 35 shared features" in page
+    table = _section(page, '<table class="shared">', "</table>")
+    assert table.count("<tr>") == 31  # header + 30
+
+
+def test_drill_down_sections_collapsed_in_order(tmp_path):
+    rows = [summary_row(f"S{i}", assembly=True) for i in range(5)]
+    _, _, page = run_report(tmp_path, rows)
+    summaries = re.findall(r'<details class="drill"[^>]*>\n<summary>([^<]*)</summary>', page)
+    assert summaries == [
+        "Distributions", "All breakpoints", "All nested blocks", "Assembly metrics",
+        "Per-sample detail", "Metric definitions", "Parameters",
+    ]
+    tags = re.findall(r"<details[^>]*>", page)
+    assert len(tags) == 7 + 5  # drill-downs + one per sample
+    assert all("open" not in t for t in tags)
+    # The summary comes before every drill-down.
+    assert page.index('<div class="summary-box">') < page.index('<details class="drill"')
+    assert page.index('<table class="samples">') < page.index('<details class="drill"')
+    # Definitions cover status vocabulary.
+    defs = _section(page, '<details class="drill" id="definitions">', "</details>")
+    for word in ("<dt>status</dt>", "<dt>review</dt>", "<dt>unusual</dt>"):
+        assert word in defs
+    # Without assembly data the assembly drill-down becomes MAF-only contiguity.
+    other = tmp_path / "x"
+    other.mkdir()
+    _, _, page = run_report(other, cohort(5))
+    assert "<summary>Contiguity (from the MAF only)</summary>" in page
+    assert "<summary>Assembly metrics</summary>" not in page

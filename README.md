@@ -196,7 +196,7 @@ Assembly metrics (with the FASTA):
 - **Size and contiguity.** Total length and sequence count. **Scaffold** N50/L50 is over FASTA records. **Contig** N50/L50 is over the pieces left after splitting at N gaps, and is the real contiguity measure: a chromosome-scale scaffold can contain hundreds of gaps.
 - **Ns.** N bases, and the number of N gaps (runs of at least 10 N; shorter runs are ambiguous bases).
 - **GC and soft-masking.** Soft-masked % is `NA` when the FASTA has no lowercase at all, i.e. it was never soft-masked.
-- **Telomeres.** A sequence end is telomeric when at least half of its terminal 1 kb is plant telomere repeat (`TTTAGGG`/`CCCTAAA`). Ends are counted on the **major** sequences (the largest ones covering 95% of the assembly; for a chromosome-level assembly, the chromosomes), reported as e.g. "14 / 20". Small scaffolds carrying telomere repeat are counted separately.
+- **Telomeres.** A sequence end is telomeric when at least half of its terminal 1 kb is plant telomere repeat (`TTTAGGG`/`CCCTAAA`). Ends are counted on the **major** sequences (those at least 10% as long as the longest one: for a chromosome-level assembly, the chromosomes, however much small unplaced sequence there is), reported as e.g. "14 / 20". Small scaffolds carrying telomere repeat are counted separately.
 - **Unaligned sequences.** Size and N/soft-masked content of sequences with no alignment. The FASTA's lengths also become the query-coverage denominator.
 
 Identity, aligned bases, and insertion/deletion counts are summed over columns, so overlapping or secondary blocks are counted more than once. Block span is union-based. `overlapping_reference_bp` shows how much duplication there is.

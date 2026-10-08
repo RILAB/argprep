@@ -444,7 +444,7 @@ def test_assembly_metrics_and_unaligned_contigs(tmp_path):
     # q1 splits at its 12-N gap; the unaligned contig keeps one piece after its leading gap
     assert s["assembly_contig_pieces"] == 3
     assert s["assembly_contig_n50_bp"] == len(q1) - 12 - 10
-    assert s["assembly_major_sequences"] == 1  # q1 alone covers >95% of the assembly
+    assert s["assembly_major_sequences"] == 1  # the unaligned contig is under 10% of q1's length
     assert s["assembly_major_telomeric_ends"] == 1
     assert s["assembly_minor_sequences_with_telomere"] == 0
     assert s["unaligned_contigs"] == 1
@@ -601,4 +601,11 @@ def test_identical_query_intervals_nest_the_later_block():
     counts = classify_breakpoints([b, a], ORDER, 0, 0)
     assert [(n.ref_contig, c.ref_contig) for n, c in counts.nested] == [("chr2", "chr1")]
     assert counts.breakpoint_adjacencies == 0
+
+
+def test_major_sequences_ignore_scaffold_debris():
+    contigs = {f"chr{i}": 300 - i * 10 for i in range(1, 11)}  # 290..200
+    contigs.update({f"scaf_{i}": 5 for i in range(200)})  # lots of small unplaced sequence
+    assembly = {name: maf_stats.contig_stats(b"A" * length) for name, length in contigs.items()}
+    assert maf_stats.major_sequences(assembly) == {f"chr{i}" for i in range(1, 11)}
 

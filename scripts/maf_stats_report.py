@@ -2,10 +2,15 @@
 """Cross-sample MAF QC report.
 
 Merges the per-sample outputs of ``scripts/maf_stats.py`` into one TSV (one row
-per sample plus a machine-readable ``flags`` column), one combined breakpoint
-TSV and one combined nested-block TSV, each annotated with cross-sample
-recurrence, and one self-contained HTML report (embedded CSS, inline SVG, no
-JavaScript).
+per sample plus machine-readable ``status``, ``unusual`` and ``flags`` columns),
+one combined breakpoint TSV and one combined nested-block TSV, each annotated
+with cross-sample recurrence, and one self-contained HTML report (embedded CSS,
+inline SVG, and one tiny inline script that opens collapsed sections when an
+in-page link points into them).
+
+The HTML leads with a plain-language summary (status counts, cohort ranges,
+one card per sample that needs review or is unusual, a compact sample table and
+shared features) and puts everything else in collapsed drill-down sections.
 """
 from __future__ import annotations
 
@@ -254,18 +259,21 @@ DEFAULT_MIN_SAMPLES = 5
 DEFAULT_Z_THRESHOLD = 3.5
 DEFAULT_RECURRENCE_WINDOW_BP = 500_000
 
-# Direction in which a metric is "bad". Order here is the order flags are listed.
+# Direction in which a metric is "bad". Order here is the order flags are listed,
+# and each gets a strip plot. overlapping_reference_bp and reference_contig_jumps
+# are deliberately absent: AnchorWave aligns each reference chromosome one-to-one
+# with its counterpart, so both are 0 for every sample. They are reported but
+# neither flagged nor plotted.
 FLAG_DIRECTIONS: dict[str, str] = {
     "aligned_reference_pct": "low",
     "aligned_query_pct": "low",
     "identity_pct": "low",
     "assembly_contig_n50_bp": "low",
-    "overlapping_reference_bp": "high",
     "overlapping_query_bp": "high",
     "breakpoints_per_gb_aligned": "high",
-    "reference_contig_jumps": "high",
     "breakpoints_private": "high",
     "assembly_n_pct": "high",
+    "unaligned_contig_bp": "high",
 }
 
 # Absolute lower bound on the robust scale, in the metric's own units. Prevents
@@ -275,20 +283,19 @@ SCALE_ABSOLUTE_FLOORS: dict[str, float] = {
     "aligned_query_pct": 1.0,
     "identity_pct": 1.0,
     "assembly_n_pct": 0.5,
-    "reference_contig_jumps": 1.0,
     "breakpoints_private": 2.0,
     "breakpoints_per_gb_aligned": 1.0,
-    "overlapping_reference_bp": 100_000.0,
     "overlapping_query_bp": 100_000.0,
     "assembly_contig_n50_bp": 1_000_000.0,
+    "unaligned_contig_bp": 1_000_000.0,
 }
 
 # Additional scale floor as a fraction of |median| for count-like metrics.
 SCALE_RELATIVE_FLOORS: dict[str, float] = {
     "breakpoints_per_gb_aligned": 0.05,
-    "overlapping_reference_bp": 0.05,
     "overlapping_query_bp": 0.05,
     "assembly_contig_n50_bp": 0.05,
+    "unaligned_contig_bp": 0.05,
 }
 
 # CLI option dest -> metric for optional absolute thresholds. Direction comes
@@ -589,8 +596,8 @@ METRIC_DEFINITIONS: list[tuple[str, str]] = [
      "Lowercase (soft-masked) bases divided by assembly length. NA when the FASTA has no "
      "lowercase at all (not soft-masked)."),
     ("assembly_major_sequences",
-     "The largest sequences that together cover 95% of the assembly length, i.e. the "
-     "chromosome-scale sequences."),
+     "Sequences at least 10% as long as the longest one, i.e. the chromosome-scale "
+     "sequences of a chromosome-level assembly (unplaced scaffolds are excluded)."),
     ("assembly_major_telomeric_ends",
      "Telomeric ends among the major sequences, out of 2 &times; "
      "<code>assembly_major_sequences</code> (shown as &ldquo;ends / possible&rdquo;). An end "
@@ -897,13 +904,29 @@ class MetricStats:
     relative_enabled: bool
 
 
+STATUS_OK = "ok"
+STATUS_REVIEW = "review"
+STATUS_UNUSUAL = "unusual"
+STATUS_ICONS = {STATUS_OK: "\u2714", STATUS_REVIEW: "\u26a0", STATUS_UNUSUAL: "\u25c6"}
+STATUS_LABELS = {STATUS_OK: "normal", STATUS_REVIEW: "needs review", STATUS_UNUSUAL: "unusual"}
+
+
 @dataclass
 class FlagResult:
-    # per sample (input order): metric -> list of reasons
+    # per sample (input order): metric -> list of reasons (bad direction or
+    # absolute-threshold failures; these make a sample "review")
     flags: list[dict[str, list[str]]]
     stats: dict[str, MetricStats | None] = field(default_factory=dict)
     # metrics whose relative flagging was skipped -> number of non-NA samples
     skipped: dict[str, int] = field(default_factory=dict)
+    # per sample: metric -> reasons for |z| > threshold in the GOOD direction
+    unusual: list[dict[str, list[str]]] = field(default_factory=list)
+    # per sample: metric -> robust z (only metrics with relative flagging enabled)
+    z_scores: list[dict[str, float]] = field(default_factory=list)
+
+    @property
+    def status(self) -> list[str]:
+        return compute_status(self)
 
 
 def robust_scale(metric: str, median: float, mad: float) -> float:
@@ -930,12 +953,20 @@ def compute_flags(
     ``thresholds`` maps metric name -> absolute threshold; the direction is
     taken from ``FLAG_DIRECTIONS`` (low-is-bad -> flag when value < threshold).
     Metrics that are NA (or absent) for a sample are skipped for that sample.
+
+    |z| above ``z_threshold`` in the bad direction goes in ``flags``; in the
+    good direction it goes in ``unusual`` (never in ``flags``). Absolute
+    thresholds only ever produce flags.
     """
     thresholds = thresholds or {}
     for metric in thresholds:
         if metric not in FLAG_DIRECTIONS:
             raise ValueError(f"No flag direction defined for threshold metric {metric!r}")
-    result = FlagResult(flags=[{} for _ in summaries])
+    result = FlagResult(
+        flags=[{} for _ in summaries],
+        unusual=[{} for _ in summaries],
+        z_scores=[{} for _ in summaries],
+    )
 
     for metric, direction in FLAG_DIRECTIONS.items():
         values = [parse_number(s.get(metric)) for s in summaries]
@@ -963,10 +994,14 @@ def compute_flags(
             reasons: list[str] = []
             if stats is not None and stats.relative_enabled:
                 z = (value - stats.median) / stats.scale
+                result.z_scores[idx][metric] = z
+                tag = "(mad0_floor)" if stats.mad == 0 else ""
                 bad = z < -z_threshold if direction == "low" else z > z_threshold
+                good = z > z_threshold if direction == "low" else z < -z_threshold
                 if bad:
-                    tag = "(mad0_floor)" if stats.mad == 0 else ""
                     reasons.append(f"robust_z={z:.2f}{tag}")
+                elif good:
+                    result.unusual[idx][metric] = [f"robust_z={z:.2f}{tag}"]
             if threshold is not None:
                 if direction == "low" and value < threshold:
                     reasons.append(f"below_threshold_{threshold:g}")
@@ -977,8 +1012,28 @@ def compute_flags(
     return result
 
 
+def sample_status(
+    sample_flags: dict[str, list[str]], sample_unusual: dict[str, list[str]] | None = None
+) -> str:
+    """``review`` if any flag, else ``unusual`` if any unusual metric, else ``ok``."""
+    if sample_flags:
+        return STATUS_REVIEW
+    if sample_unusual:
+        return STATUS_UNUSUAL
+    return STATUS_OK
+
+
+def compute_status(flag_result: FlagResult) -> list[str]:
+    """Per-sample status (input order): review > unusual > ok."""
+    unusual = flag_result.unusual or [{} for _ in flag_result.flags]
+    return [sample_status(f, u) for f, u in zip(flag_result.flags, unusual)]
+
+
 def format_flags(sample_flags: dict[str, list[str]]) -> str:
-    """``metric:reason;metric:reason`` in FLAG_DIRECTIONS order; '' when none."""
+    """``metric:reason;metric:reason`` in FLAG_DIRECTIONS order; '' when none.
+
+    Also used for the ``unusual`` column.
+    """
     entries: list[str] = []
     for metric in FLAG_DIRECTIONS:
         for reason in sample_flags.get(metric, []):
@@ -989,17 +1044,26 @@ def format_flags(sample_flags: dict[str, list[str]]) -> str:
 # ── output TSVs ──────────────────────────────────────────────────────────────
 
 
+STATUS_COLUMNS = ["status", "unusual", "flags"]
+
+
 def write_summary_tsv(
-    path: Path, summaries: list[dict[str, str]], flags: list[dict[str, list[str]]]
+    path: Path,
+    summaries: list[dict[str, str]],
+    flags: list[dict[str, list[str]]],
+    unusual: list[dict[str, list[str]]] | None = None,
 ) -> None:
-    """Write summary rows (input + recurrence columns) plus ``flags``."""
+    """Write summary rows (input + recurrence columns) plus status/unusual/flags."""
+    unusual = unusual or [{} for _ in summaries]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
-        fh.write("\t".join(OUTPUT_SUMMARY_COLUMNS + ["flags"]) + "\n")
-        for row, sample_flags in zip(summaries, flags):
+        fh.write("\t".join(OUTPUT_SUMMARY_COLUMNS + STATUS_COLUMNS) + "\n")
+        for row, sample_flags, sample_unusual in zip(summaries, flags, unusual):
             fh.write(
                 "\t".join([row.get(c, "NA") for c in OUTPUT_SUMMARY_COLUMNS]
-                          + [format_flags(sample_flags)])
+                          + [sample_status(sample_flags, sample_unusual),
+                             format_flags(sample_unusual),
+                             format_flags(sample_flags)])
                 + "\n"
             )
 
@@ -1020,10 +1084,498 @@ def write_nested_tsv(path: Path, annotated: list[dict[str, str]]) -> None:
     _write_rows(path, OUTPUT_NESTED_COLUMNS, annotated)
 
 
+# ── plain-language reasons ───────────────────────────────────────────────────
+
+
+def fmt_bp(value: float) -> str:
+    """Human-readable length: ``812 bp``, ``45.3 kb``, ``48.1 Mb``, ``2.13 Gb``."""
+    a = abs(value)
+    if a >= 1e9:
+        return f"{value / 1e9:.2f} Gb"
+    if a >= 1e6:
+        return f"{value / 1e6:.1f} Mb"
+    if a >= 1e3:
+        return f"{value / 1e3:.1f} kb"
+    return f"{value:,.0f} bp"
+
+
+def _scaled(value: float, unit: float, decimals: int) -> str:
+    return f"{value / unit:,.{decimals}f}"
+
+
+def fmt_span(contig: str, start: float, end: float) -> str:
+    """``chr2:122.0–148.0 Mb`` (enough decimals that start and end differ)."""
+    top = max(abs(start), abs(end))
+    if top >= 1e6:
+        unit, suffix = 1e6, " Mb"
+    elif top >= 1e3:
+        unit, suffix = 1e3, " kb"
+    else:
+        return f"{contig}:{start:,.0f}–{end:,.0f}"
+    for decimals in (1, 2, 3):
+        a, b = _scaled(start, unit, decimals), _scaled(end, unit, decimals)
+        if a != b:
+            break
+    return f"{contig}:{a}–{b}{suffix}"
+
+
+def _fmt_pos(value: float) -> str:
+    if abs(value) >= 1e6:
+        return f"{value / 1e6:,.2f} Mb"
+    if abs(value) >= 1e3:
+        return f"{value / 1e3:,.1f} kb"
+    return f"{value:,.0f} bp"
+
+
+def _fmt_metric_value(metric: str, value: float) -> str:
+    if metric in ("aligned_reference_pct", "aligned_query_pct"):
+        return f"{value:.1f}%"
+    if metric in ("identity_pct", "assembly_n_pct"):
+        return f"{value:.2f}%"
+    if metric.endswith("_bp"):
+        return fmt_bp(value)
+    if metric == "breakpoints_per_gb_aligned":
+        return f"{value:.1f}"
+    return f"{value:g}"
+
+
+# metric -> (subject with {v}, comparison with {m})
+SENTENCE_TEMPLATES: dict[str, tuple[str, str]] = {
+    "aligned_reference_pct": ("Aligned reference {v}", "vs cohort median {m}"),
+    "aligned_query_pct": ("Aligned query {v}", "vs cohort median {m}"),
+    "identity_pct": ("Identity {v}", "vs cohort median {m}"),
+    "assembly_contig_n50_bp": ("Contig N50 {v}", "vs cohort median {m}"),
+    "overlapping_query_bp": ("{v} of query sequence aligned more than once", "vs median {m}"),
+    "breakpoints_per_gb_aligned": ("{v} breakpoints per Gb aligned", "vs median {m}"),
+    "breakpoints_private": ("{v} private breakpoints (not seen in any other sample)",
+                            "vs median {m}"),
+    "assembly_n_pct": ("N content {v}", "vs cohort median {m}"),
+    "unaligned_contig_bp": ("{v} in assembly contigs with no alignment", "vs median {m}"),
+}
+
+THRESHOLD_OPTION_FOR_METRIC = {
+    metric: "--" + dest.replace("_", "-") for dest, metric in THRESHOLD_OPTIONS.items()
+}
+
+
+@dataclass
+class Reason:
+    """One plain-language reason a sample needs review or is unusual."""
+
+    metric: str
+    kind: str  # STATUS_REVIEW or STATUS_UNUSUAL
+    sentence: str  # plain text (escape when rendering)
+    where: str = ""  # plain text pointer to the region(s), or ""
+    dotplots: list[tuple[str, str]] = field(default_factory=list)  # (ref contig, path)
+
+
+def metric_sentence(
+    metric: str,
+    value: float,
+    stats: MetricStats | None,
+    z: float | None,
+    reasons: list[str],
+    z_threshold: float,
+) -> str:
+    """``Aligned reference 52.6% vs cohort median 38.8% (much higher than the rest; z=+4.1)``."""
+    subject, comparison = SENTENCE_TEMPLATES.get(metric, (f"{metric} {{v}}", "vs median {m}"))
+    text = subject.format(v=_fmt_metric_value(metric, value))
+    if stats is not None:
+        text += " " + comparison.format(m=_fmt_metric_value(metric, stats.median))
+    notes: list[str] = []
+    if z is not None and abs(z) > z_threshold:
+        notes.append("much higher than the rest" if z > 0 else "much lower than the rest")
+        notes.append(f"z={z:+.1f}")
+        if stats is not None and stats.mad == 0:
+            notes.append("other samples nearly identical")
+    for reason in reasons:
+        if reason.startswith(("below_threshold_", "above_threshold_")):
+            word, limit = reason.split("_threshold_")
+            option = THRESHOLD_OPTION_FOR_METRIC.get(metric, "threshold")
+            notes.append(f"{word} the {option} threshold of {limit}")
+    if notes:
+        text += f" ({'; '.join(notes)})"
+    return text
+
+
+def _num(row: dict[str, str], col: str) -> float:
+    return parse_number(row.get(col)) or 0.0
+
+
+def _dotplot_for(ref_rows: list[dict[str, str]], contigs: list[str]) -> list[tuple[str, str]]:
+    paths = {r.get("reference_contig", ""): (r.get("dotplot") or "").strip() for r in ref_rows}
+    out = []
+    for c in contigs:
+        p = paths.get(c, "")
+        if p and (c, p) not in out:
+            out.append((c, p))
+    return out
+
+
+def _strand_word(strand: str) -> str:
+    return {"-": "inverted", "+": "forward"}.get(strand.strip(), strand.strip() or "?")
+
+
+def _pointer_overlap(
+    query_rows: list[dict[str, str]],
+    nested_rows: list[dict[str, str]],
+    ref_rows: list[dict[str, str]],
+    bp_rows: list[dict[str, str]] | None = None,
+) -> tuple[str, list[tuple[str, str]]]:
+    parts: list[str] = []
+    contigs: list[str] = []
+    candidates = [r for r in query_rows if _num(r, "overlapping_query_bp") > 0]
+    top = max(candidates, key=lambda r: _num(r, "overlapping_query_bp"), default=None)
+    pool = nested_rows
+    if top is not None:
+        name = top.get("query_contig", "")
+        overlap = _num(top, "overlapping_query_bp")
+        length = parse_number(top.get("query_length_bp"))
+        of = f" of {fmt_bp(length)}" if length else ""
+        parts.append(f"most on query contig {name} ({fmt_bp(overlap)}{of})")
+        on_top = [r for r in nested_rows if r.get("query_contig") == name]
+        pool = on_top or nested_rows
+        junctions = sorted(
+            v for v in (parse_number(r.get("query_junction_start"))
+                        for r in (bp_rows or []) if r.get("query_contig") == name)
+            if v is not None
+        )
+        if junctions:
+            shown = ", ".join(_fmt_pos(v) for v in junctions[:4])
+            more = f" and {len(junctions) - 4} more" if len(junctions) > 4 else ""
+            parts.append(f"breakpoints on {name} at query {shown}{more}")
+            for r in bp_rows or []:
+                if r.get("query_contig") == name:
+                    for side in ("left", "right"):
+                        c = (r.get(f"{side}_reference_contig") or "").strip()
+                        if c and c not in NA_VALUES:
+                            contigs.append(c)
+
+    def span(r: dict[str, str]) -> float:
+        a, b = parse_number(r.get("query_start")), parse_number(r.get("query_end"))
+        return (b - a) if a is not None and b is not None else -1.0
+
+    nb = max(pool, key=span, default=None)
+    if nb is not None and span(nb) >= 0:
+        qs, qe = parse_number(nb.get("query_start")), parse_number(nb.get("query_end"))
+        text = (f"largest nested block ({fmt_bp(qe - qs)}): query "
+                f"{fmt_span(nb.get('query_contig', ''), qs, qe)}")
+        rs, re_ = parse_number(nb.get("reference_start")), parse_number(nb.get("reference_end"))
+        rc = (nb.get("reference_contig") or "").strip()
+        if rc not in NA_VALUES and rs is not None and re_ is not None:
+            text += (f" also aligns {_strand_word(nb.get('strand') or '')} to reference "
+                     f"{fmt_span(rc, rs, re_)}")
+            contigs.append(rc)
+        cc = (nb.get("container_reference_contig") or "").strip()
+        cs = parse_number(nb.get("container_reference_start"))
+        ce = parse_number(nb.get("container_reference_end"))
+        if cc not in NA_VALUES and cs is not None and ce is not None:
+            text += (f", inside a {_strand_word(nb.get('container_strand') or '')} block "
+                     f"on {fmt_span(cc, cs, ce)}")
+            contigs.append(cc)
+        parts.append(text)
+    return "; ".join(parts), _dotplot_for(ref_rows, contigs)
+
+
+def _pointer_breakpoints(
+    bp_rows: list[dict[str, str]],
+    query_rows: list[dict[str, str]],
+    ref_rows: list[dict[str, str]],
+    *,
+    private_only: bool,
+) -> tuple[str, list[tuple[str, str]]]:
+    rows = [r for r in bp_rows if not private_only or r.get("recurrent") != "true"]
+    counts: dict[str, int] = {}
+    refs: dict[str, list[str]] = {}
+    for r in rows:
+        q = r.get("query_contig", "")
+        counts[q] = counts.get(q, 0) + 1
+        for side in ("left", "right"):
+            c = (r.get(f"{side}_reference_contig") or "").strip()
+            if c and c not in NA_VALUES and c not in refs.setdefault(q, []):
+                refs[q].append(c)
+    if not counts and not private_only:
+        for r in query_rows:
+            n = int(_num(r, "breakpoint_adjacencies"))
+            if n > 0:
+                counts[r.get("query_contig", "")] = n
+    if not counts:
+        return "", []
+    top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    text = "on query contig" + ("s " if len(top) > 1 else " ")
+    text += ", ".join(f"{q} ({n})" for q, n in top)
+    if len(counts) > 3:
+        text += f" and {len(counts) - 3} more"
+    involved: list[str] = []
+    for q, _ in top:
+        for c in refs.get(q, []):
+            if c not in involved:
+                involved.append(c)
+    if involved:
+        text += "; reference contig" + ("s " if len(involved) > 1 else " ") + ", ".join(involved)
+    return text, _dotplot_for(ref_rows, involved[:3])
+
+
+def contig_medians(
+    by_reference: dict[str, list[dict[str, str]]], column: str, min_samples: int = 3
+) -> dict[str, float]:
+    """Per reference contig: cohort median of ``column`` (contigs seen in >= min_samples)."""
+    values: dict[str, list[float]] = {}
+    for rows in by_reference.values():
+        for r in rows:
+            v = parse_number(r.get(column))
+            if v is not None:
+                values.setdefault(r.get("reference_contig", ""), []).append(v)
+    return {c: statistics.median(v) for c, v in values.items() if len(v) >= min_samples}
+
+
+def _pointer_contigs(
+    column: str,
+    sign: float,
+    ref_rows: list[dict[str, str]],
+    medians: dict[str, float],
+) -> tuple[str, list[tuple[str, str]]]:
+    """Reference contigs that deviate most (in direction ``sign``) from their cohort median.
+
+    Contigs shorter than 1% of the total reference length (unplaced scaffolds)
+    are ignored.
+    """
+    total = sum(_num(r, "reference_length_bp") for r in ref_rows)
+    devs: list[tuple[float, str, float, float]] = []
+    for r in ref_rows:
+        c = r.get("reference_contig", "")
+        length = parse_number(r.get("reference_length_bp"))
+        if total > 0 and length is not None and length < 0.01 * total:
+            continue
+        v = parse_number(r.get(column))
+        if v is None or c not in medians:
+            continue
+        devs.append((sign * (v - medians[c]), c, v, medians[c]))
+    if not devs:
+        return "", []
+    devs.sort(key=lambda d: (-d[0], d[1]))
+    floor = 0.5 if column == "identity_pct" else 1.0
+    if devs[0][0] <= floor:
+        return "", []
+    decimals = 2 if column == "identity_pct" else 1
+    word = "higher" if sign > 0 else "lower"
+
+    def show(d: tuple[float, str, float, float]) -> str:
+        return f"{d[1]} {d[2]:.{decimals}f}% vs {d[3]:.{decimals}f}%"
+
+    same = sum(1 for d in devs if d[0] > floor)
+    typical = statistics.median(d[0] for d in devs)
+    if same >= 0.75 * len(devs) and len(devs) >= 2:
+        text = (f"{word} on {same} of {len(devs)} reference contigs (genome-wide); "
+                f"most: {show(devs[0])} (contig median)")
+        top = [devs[0]]
+    elif devs[0][0] >= 2 * max(typical, 0.0):
+        top = [d for d in devs[:3] if d[0] > floor and d[0] >= devs[0][0] / 2]
+        text = "mostly " + ", ".join(show(d) for d in top) + " (contig medians)"
+    else:
+        return "", []
+    return text, _dotplot_for(ref_rows, [d[1] for d in top])
+
+
+def explain_sample(
+    row: dict[str, str],
+    sample_flags: dict[str, list[str]],
+    sample_unusual: dict[str, list[str]],
+    z_scores: dict[str, float],
+    stats: dict[str, MetricStats | None],
+    *,
+    ref_rows: list[dict[str, str]],
+    query_rows: list[dict[str, str]],
+    bp_rows: list[dict[str, str]],
+    nested_rows: list[dict[str, str]],
+    medians: dict[str, dict[str, float]],
+    z_threshold: float,
+) -> list[Reason]:
+    """Plain-language reasons (review first, then unusual) in FLAG_DIRECTIONS order.
+
+    ``medians`` maps a by-reference column (``aligned_reference_pct``,
+    ``identity_pct``) to per-contig cohort medians (see ``contig_medians``).
+    """
+    out: list[Reason] = []
+    for kind, source in ((STATUS_REVIEW, sample_flags), (STATUS_UNUSUAL, sample_unusual)):
+        for metric in FLAG_DIRECTIONS:
+            if metric not in source:
+                continue
+            value = parse_number(row.get(metric))
+            if value is None:
+                continue
+            sentence = metric_sentence(
+                metric, value, stats.get(metric), z_scores.get(metric), source[metric],
+                z_threshold,
+            )
+            where, plots = "", []
+            if metric == "overlapping_query_bp":
+                where, plots = _pointer_overlap(query_rows, nested_rows, ref_rows, bp_rows)
+            elif metric in ("breakpoints_per_gb_aligned", "breakpoints_private"):
+                where, plots = _pointer_breakpoints(
+                    bp_rows, query_rows, ref_rows,
+                    private_only=metric == "breakpoints_private",
+                )
+            elif metric in ("aligned_reference_pct", "aligned_query_pct", "identity_pct"):
+                column = "identity_pct" if metric == "identity_pct" else "aligned_reference_pct"
+                st = stats.get(metric)
+                sign = 1.0 if (st is not None and value > st.median) else -1.0
+                where, plots = _pointer_contigs(column, sign, ref_rows, medians.get(column, {}))
+            out.append(Reason(metric, kind, sentence, where, plots))
+    return out
+
+
+# ── shared features (cross-sample clusters) ──────────────────────────────────
+
+MAX_HTML_SHARED_FEATURES = 30
+
+
+@dataclass
+class SharedFeature:
+    kind: str  # "breakpoint" or "nested block"
+    region: str  # plain text
+    samples: list[str]  # distinct samples, input order
+    rows: int
+    detail: str = ""  # e.g. breakpoint types
+    sort_key: tuple = ()
+
+
+class _UnionFind:
+    def __init__(self, n: int) -> None:
+        self.parent = list(range(n))
+
+    def find(self, i: int) -> int:
+        while self.parent[i] != i:
+            self.parent[i] = self.parent[self.parent[i]]
+            i = self.parent[i]
+        return i
+
+    def union(self, a: int, b: int) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[max(ra, rb)] = min(ra, rb)
+
+
+def _contig_sort_key(contig: str) -> tuple:
+    digits = "".join(ch for ch in contig if ch.isdigit())
+    return (int(digits) if digits else float("inf"), contig)
+
+
+def _range_text(contig: str, lo: float, hi: float) -> str:
+    if hi - lo < 1:
+        return f"{contig} {_fmt_pos(lo)}"
+    return fmt_span(contig, lo, hi).replace(":", " ", 1)
+
+
+def cluster_shared_features(
+    samples: list[str],
+    breakpoints: list[dict[str, str]],
+    nested: list[dict[str, str]],
+    window_bp: int = DEFAULT_RECURRENCE_WINDOW_BP,
+) -> list[SharedFeature]:
+    """Group breakpoints / nested blocks that match across samples into clusters.
+
+    Matching uses the same rules as the recurrence annotation (breakpoints:
+    both ends on the same reference contigs within ``window_bp``, either
+    orientation; nested blocks: same reference contig, start and end each
+    within ``window_bp``), linked transitively (single linkage). Only clusters
+    with at least two distinct samples are returned, largest first.
+    """
+    if len(samples) < 2:
+        return []
+    order = {s: i for i, s in enumerate(samples)}
+    bin_width = max(int(window_bp), 1)
+    features: list[SharedFeature] = []
+
+    # breakpoints
+    ends = [_breakpoint_ends(r) for r in breakpoints]
+    uf = _UnionFind(len(breakpoints))
+    index: dict[tuple[str, str, str, int], list[int]] = {}
+    for i, e in enumerate(ends):
+        if e is None:
+            continue
+        key = tuple(sorted((e[0][0], e[1][0])))
+        for contig, pos in e:
+            index.setdefault((*key, contig, int(pos // bin_width)), []).append(i)  # type: ignore[arg-type]
+    for i, e in enumerate(ends):
+        if e is None:
+            continue
+        key = tuple(sorted((e[0][0], e[1][0])))
+        contig, pos = e[0]
+        b = int(pos // bin_width)
+        for nb in (b - 1, b, b + 1):
+            for j in index.get((*key, contig, nb), ()):  # type: ignore[arg-type]
+                if j != i and _ends_match(e, ends[j], window_bp):  # type: ignore[arg-type]
+                    uf.union(i, j)
+    groups: dict[int, list[int]] = {}
+    for i, e in enumerate(ends):
+        if e is not None:
+            groups.setdefault(uf.find(i), []).append(i)
+    for members in groups.values():
+        names = sorted({breakpoints[i]["sample"] for i in members}, key=lambda s: order.get(s, 0))
+        if len(names) < 2:
+            continue
+        normed = [sorted(ends[i], key=lambda x: (_contig_sort_key(x[0]), x[1])) for i in members]  # type: ignore[arg-type]
+        a_contig, b_contig = normed[0][0][0], normed[0][1][0]
+        a_pos = [n[0][1] for n in normed if n[0][0] == a_contig]
+        b_pos = [n[1][1] for n in normed if n[1][0] == b_contig]
+        region = (f"{_range_text(a_contig, min(a_pos), max(a_pos))} ↔ "
+                  f"{_range_text(b_contig, min(b_pos), max(b_pos))}")
+        types: list[str] = []
+        for i in members:
+            for t in _breakpoint_types(breakpoints[i]).split(", "):
+                if t and t not in types:
+                    types.append(t)
+        features.append(SharedFeature(
+            "breakpoint", region, names, len(members), ", ".join(types),
+            (-len(names), 0, _contig_sort_key(a_contig), min(a_pos)),
+        ))
+
+    # nested blocks
+    keys = [_nested_key(r) for r in nested]
+    uf = _UnionFind(len(nested))
+    nindex: dict[tuple[str, int], list[int]] = {}
+    for i, k in enumerate(keys):
+        if k is not None:
+            nindex.setdefault((k[0], int(k[1] // bin_width)), []).append(i)
+    for i, k in enumerate(keys):
+        if k is None:
+            continue
+        b = int(k[1] // bin_width)
+        for nb in (b - 1, b, b + 1):
+            for j in nindex.get((k[0], nb), ()):
+                o = keys[j]
+                if j != i and abs(o[1] - k[1]) <= window_bp and abs(o[2] - k[2]) <= window_bp:  # type: ignore[index]
+                    uf.union(i, j)
+    ngroups: dict[int, list[int]] = {}
+    for i, k in enumerate(keys):
+        if k is not None:
+            ngroups.setdefault(uf.find(i), []).append(i)
+    for members in ngroups.values():
+        names = sorted({nested[i]["sample"] for i in members}, key=lambda s: order.get(s, 0))
+        if len(names) < 2:
+            continue
+        contig = keys[members[0]][0]  # type: ignore[index]
+        lo = min(keys[i][1] for i in members)  # type: ignore[index]
+        hi = max(keys[i][2] for i in members)  # type: ignore[index]
+        strands = sorted({(nested[i].get("strand") or "").strip() for i in members} - {""})
+        features.append(SharedFeature(
+            "nested block", fmt_span(contig, lo, hi), names, len(members),
+            "strand " + "/".join(strands) if strands else "",
+            (-len(names), 1, _contig_sort_key(contig), lo),
+        ))
+
+    features.sort(key=lambda f: f.sort_key)
+    return features
+
+
 # ── HTML helpers ─────────────────────────────────────────────────────────────
 
 
 NA_HTML = '<span class="na">NA</span>'
+COLOR_REVIEW = "#D6423F"
+COLOR_UNUSUAL = "#7B5EA7"
+COLOR_NORMAL = "#7A93AC"
 
 
 def esc(text: object) -> str:
@@ -1067,11 +1619,16 @@ def svg_strip_plot(
     samples: list[str],
     values: list[float | None],
     flagged: list[bool],
+    unusual: list[bool] | None = None,
     *,
     width: int = 900,
     height: int = 74,
 ) -> str:
-    """One-dimensional strip plot: one dot per sample, median line, flagged dots red."""
+    """One-dimensional strip plot: one dot per sample, median line.
+
+    Flagged (review) dots are red, unusual dots purple, the rest grey-blue.
+    """
+    unusual = unusual or [False] * len(samples)
     margin = {"left": 200, "right": 30, "top": 12, "bottom": 24}
     plot_w = width - margin["left"] - margin["right"]
     plot_h = height - margin["top"] - margin["bottom"]
@@ -1129,15 +1686,19 @@ def svg_strip_plot(
 
     lanes = 5
     lane_h = plot_h / (lanes + 1)
-    # Draw unflagged dots first so flagged ones sit on top.
-    order = sorted(range(len(samples)), key=lambda i: flagged[i])
+    # Draw normal dots first so flagged/unusual ones sit on top.
+    order = sorted(range(len(samples)), key=lambda i: (flagged[i], unusual[i]))
     for i in order:
         v = values[i]
         if v is None:
             continue
         cy = margin["top"] + lane_h * (1 + i % lanes)
-        color = "#E45756" if flagged[i] else "#4C78A8"
-        cls = "dot flagged" if flagged[i] else "dot"
+        if flagged[i]:
+            color, cls = COLOR_REVIEW, "dot flagged"
+        elif unusual[i]:
+            color, cls = COLOR_UNUSUAL, "dot unusual"
+        else:
+            color, cls = COLOR_NORMAL, "dot"
         parts.append(
             f'<circle class="{cls}" cx="{x_scale(v):.2f}" cy="{cy:.2f}" r="4" fill="{color}" '
             f'fill-opacity="0.85" stroke="white" stroke-width="0.5">'
@@ -1368,13 +1929,16 @@ def _sample_table(
     css_class: str,
     *,
     flags_column: bool,
+    unusual: list[dict[str, list[str]]] | None = None,
 ) -> str:
+    """Full table; flagged cells (review) and unusual cells highlighted, tooltip = raw reason."""
+    unusual = unusual or [{} for _ in summaries]
     out = [f'<div class="scroll"><table class="{css_class}">\n<tr><th>Sample</th>']
     out.extend(f"<th>{esc(METRIC_LABELS.get(c, c))}</th>" for c in columns)
     if flags_column:
-        out.append("<th>Flags</th>")
+        out.append("<th>Unusual</th><th>Flags</th>")
     out.append("</tr>\n")
-    for row, sample_flags in zip(summaries, flags):
+    for row, sample_flags, sample_unusual in zip(summaries, flags, unusual):
         sample = row["sample"]
         out.append(f'<tr><td><a href="#{esc(_sample_anchor(samples, sample))}">{esc(sample)}</a></td>')
         for col in columns:
@@ -1385,13 +1949,19 @@ def _sample_table(
             if col == "aligned_query_pct" and row.get("query_length_source") == "maf_srcsize":
                 cell += " &dagger;"
             reasons = sample_flags.get(col)
+            odd = sample_unusual.get(col)
             if reasons:
                 tip = "; ".join(f"{col}:{r}" for r in reasons)
                 out.append(f'<td class="flag" title="{esc(tip)}">{cell}</td>')
+            elif odd:
+                tip = "; ".join(f"{col}:{r}" for r in odd)
+                out.append(f'<td class="unusual" title="{esc(tip)}">{cell}</td>')
             else:
                 out.append(f"<td>{cell}</td>")
         if flags_column:
             out.append(
+                f'<td class="flags unusual-list">'
+                f'{esc(format_flags(sample_unusual).replace(";", "; "))}</td>'
                 f'<td class="flags">{esc(format_flags(sample_flags).replace(";", "; "))}</td>'
             )
         out.append("</tr>\n")
@@ -1400,18 +1970,45 @@ def _sample_table(
 
 
 CSS = """\
-body{font-family:sans-serif;margin:24px;color:#111;max-width:1200px}
+:root{--review:#D6423F;--review-bg:#fde2e1;--unusual:#7B5EA7;--unusual-bg:#ece6f6;
+--ok:#2e7d4f;--muted:#6b7280;--line:#d0d7de}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:24px auto;padding:0 16px;
+color:#111;max-width:1200px;line-height:1.45;background:#fff}
 table{border-collapse:collapse;margin:12px 0}
 th,td{border:1px solid #ccc;padding:4px 10px;text-align:right}
 th{background:#f0f0f0;text-align:center}
 td:first-child{text-align:left}
-h1,h2,h3{margin-top:1.4em}
+h1{margin:0.2em 0 0.1em;font-size:1.6em}
+h2{margin-top:1.6em;font-size:1.25em;border-bottom:1px solid var(--line);padding-bottom:4px}
+h3{margin-top:1.2em}
+p.meta{color:var(--muted);margin-top:0}
 code{background:#f6f8fa;padding:0 3px;border-radius:3px}
-details{margin:8px 0;border:1px solid #d0d7de;border-radius:6px;padding:4px 12px}
-summary{cursor:pointer;font-size:1.05em;font-weight:bold;padding:6px 0;list-style:revert}
+details{margin:8px 0;border:1px solid var(--line);border-radius:6px;padding:4px 12px}
+details.drill>summary{font-size:1.1em}
+summary{cursor:pointer;font-weight:bold;padding:6px 0;list-style:revert}
 summary:hover{color:#0969da}
-td.flag{background:#ffd7d7;font-weight:bold;cursor:help}
+.summary-box{border:1px solid var(--line);border-radius:8px;padding:12px 16px;background:#f8fafc}
+.counts{font-size:1.25em;font-weight:600;margin:0 0 6px}
+.counts .ok{color:var(--ok)} .counts .review{color:var(--review)} .counts .unusual{color:var(--unusual)}
+.cohort{margin:4px 0}
+.card{border:1px solid var(--line);border-left:6px solid var(--review);border-radius:6px;
+padding:8px 14px;margin:10px 0;background:#fff}
+.card.unusual{border-left-color:var(--unusual)}
+.card h3{margin:4px 0 6px;font-size:1.05em}
+.card ul{margin:4px 0 6px 0;padding-left:20px}
+.card li{margin:3px 0}
+.where{color:#374151;font-size:0.92em}
+.card .thumbs img{border:1px solid #ccc}
+.card-link{font-size:0.9em}
+td.status{text-align:center;cursor:help}
+td.status.review,.icon.review{color:var(--review)}
+td.status.unusual,.icon.unusual{color:var(--unusual)}
+td.status.ok,.icon.ok{color:var(--ok)}
+td.flag{background:var(--review-bg);font-weight:bold;cursor:help}
+td.unusual{background:var(--unusual-bg);cursor:help}
 td.flags{text-align:left;font-family:monospace;font-size:0.85em;color:#a40000}
+td.flags.unusual-list{color:var(--unusual)}
+td.left{text-align:left}
 tr.bp td{background:#fff8dc}
 tr.recurrent td{background:#e8f4ea}
 td.loc-contig_end{color:#8a5a00}
@@ -1424,16 +2021,143 @@ section.ref-contigs{border-left:4px solid #4C78A8;padding-left:12px;margin:12px 
 section.query-contigs{border-left:4px solid #F58518;padding-left:12px;margin:12px 0}
 section.breakpoints{border-left:4px solid #B279A2;padding-left:12px;margin:12px 0}
 section.nested{border-left:4px solid #9D755D;padding-left:12px;margin:12px 0}
+section.reasons{border-left:4px solid var(--review);padding-left:12px;margin:12px 0}
 table.maf-contiguity{font-size:0.85em;color:#555}
 section.dotplots{border-left:4px solid #54A24B;padding-left:12px;margin:12px 0}
 .scroll{overflow-x:auto}
 .thumbs{display:flex;flex-wrap:wrap;gap:12px}
 .thumbs figure{margin:0;text-align:center;font-size:0.85em}
-.thumbs img{border:1px solid #ccc}
+.thumbs img{border:1px solid #ccc;max-width:100%;height:auto}
 dl.defs dt{font-family:monospace;font-weight:bold;margin-top:8px}
 dl.defs dd{margin-left:20px}
 .legend span{display:inline-block;width:10px;height:10px;border-radius:5px;margin:0 4px 0 12px}
+svg.strip{max-width:100%;height:auto}
 """
+
+# Opens every collapsed <details> that contains the target of an in-page link,
+# so links from the summary into the drill-down sections land on visible content.
+OPEN_TARGET_JS = """\
+function argprepOpenTarget(){var id=decodeURIComponent(location.hash.slice(1));
+if(!id)return;var t=document.getElementById(id);if(!t)return;
+for(var el=t;el;el=el.parentElement){if(el.tagName==='DETAILS')el.setAttribute('open','');}
+t.scrollIntoView();}
+window.addEventListener('hashchange',argprepOpenTarget);
+window.addEventListener('DOMContentLoaded',argprepOpenTarget);
+"""
+
+# Compact sample table: (column key, label). Column keys are summary columns or
+# TELOMERE_DISPLAY_COLUMN.
+COMPACT_COLUMNS_ASSEMBLY: list[tuple[str, str]] = [
+    ("aligned_reference_pct", "Aligned ref %"),
+    ("identity_pct", "Identity %"),
+    ("breakpoint_adjacencies", "Breakpoints"),
+    ("nested_blocks", "Nested blocks"),
+    ("assembly_contig_n50_bp", "Contig N50"),
+    (TELOMERE_DISPLAY_COLUMN, "Telomeres"),
+]
+COMPACT_COLUMNS_MAF_ONLY: list[tuple[str, str]] = [
+    ("aligned_reference_pct", "Aligned ref %"),
+    ("aligned_query_pct", "Aligned query %"),
+    ("identity_pct", "Identity %"),
+    ("breakpoint_adjacencies", "Breakpoints"),
+    ("breakpoints_private", "Private breakpoints"),
+    ("nested_blocks", "Nested blocks"),
+]
+# Compact column -> flagged metrics whose reasons highlight that cell.
+COMPACT_CELL_METRICS: dict[str, tuple[str, ...]] = {
+    "aligned_reference_pct": ("aligned_reference_pct",),
+    "aligned_query_pct": ("aligned_query_pct",),
+    "identity_pct": ("identity_pct",),
+    "breakpoint_adjacencies": ("breakpoints_per_gb_aligned",),
+    "breakpoints_private": ("breakpoints_private",),
+    "nested_blocks": ("overlapping_query_bp",),
+    "assembly_contig_n50_bp": ("assembly_contig_n50_bp",),
+}
+
+STATUS_DEFINITIONS: list[tuple[str, str]] = [
+    ("status",
+     "Per-sample verdict: <code>review</code> if any metric is flagged, else "
+     "<code>unusual</code> if any metric is unusual, else <code>ok</code> (shown as normal)."),
+    ("review",
+     "A metric is flagged when its robust z-score is beyond the threshold in the "
+     "<em>bad</em> direction (e.g. far less of the reference aligned than the rest of the "
+     "cohort), or when it fails an absolute threshold given on the command line. Listed in "
+     "the <code>flags</code> column."),
+    ("unusual",
+     "A metric is unusual when its robust z-score is beyond the threshold in the "
+     "<em>good</em> direction (e.g. far more similar to the reference than the rest). Not "
+     "a failure, but worth a look: it can mean admixture, contamination, a mislabelled "
+     "sample, or a sample much closer to the reference than the others. Listed in the "
+     "<code>unusual</code> column; never in <code>flags</code>."),
+]
+
+
+def _compact_cell(row: dict[str, str], col: str) -> str:
+    if col == TELOMERE_DISPLAY_COLUMN:
+        return _telomere_cell(row)
+    if col == "assembly_contig_n50_bp":
+        v = parse_number(row.get(col))
+        return esc(fmt_bp(v)) if v is not None else NA_HTML
+    cell = fmt_value(row.get(col), col)
+    if col == "aligned_query_pct" and row.get("query_length_source") == "maf_srcsize":
+        cell += " &dagger;"
+    return cell
+
+
+def _range_phrase(
+    summaries: list[dict[str, str]], metric: str, fmt: str, unit: str = ""
+) -> str | None:
+    values = [parse_number(s.get(metric)) for s in summaries]
+    present = [v for v in values if v is not None]
+    if not present:
+        return None
+    lo, hi = min(present), max(present)
+    a, b = format(lo, fmt), format(hi, fmt)
+    return f"{a}{unit}" if a == b else f"{a}–{b}{unit}"
+
+
+def _thumb(path: str, contig: str, width: int, caption: str = "") -> str:
+    p, c = esc(path), esc(contig)
+    cap = caption or c
+    return (
+        f'<figure><a href="{p}"><img src="{p}" loading="lazy" width="{width}" '
+        f'alt="{c} dotplot"></a><figcaption>{cap}</figcaption></figure>\n'
+    )
+
+
+def _reason_list(reasons: list[Reason]) -> str:
+    out = ["<ul>\n"]
+    for r in reasons:
+        icon = STATUS_ICONS[r.kind]
+        out.append(f'<li><span class="icon {r.kind}">{icon}</span> {esc(r.sentence)}')
+        if r.where:
+            out.append(f'<br><span class="where">Where: {esc(r.where)}</span>')
+        out.append("</li>\n")
+    out.append("</ul>\n")
+    return "".join(out)
+
+
+def _card(sample: str, anchor: str, status: str, reasons: list[Reason]) -> str:
+    out = [
+        f'<div class="card {status}">\n<h3><span class="icon {status}">'
+        f'{STATUS_ICONS[status]}</span> <a href="#{esc(anchor)}">{esc(sample)}</a></h3>\n'
+    ]
+    out.append(_reason_list(reasons))
+    plots: list[tuple[str, str]] = []
+    for r in reasons:
+        for p in r.dotplots:
+            if p not in plots:
+                plots.append(p)
+    if plots:
+        out.append('<div class="thumbs">\n')
+        for contig, path in plots[:4]:
+            out.append(_thumb(path, contig, 200, f"{esc(contig)} dotplot"))
+        out.append("</div>\n")
+    out.append(
+        f'<p class="card-link"><a href="#{esc(anchor)}">Full detail for {esc(sample)} '
+        f"&darr;</a></p>\n</div>\n"
+    )
+    return "".join(out)
 
 
 def render_html(
@@ -1452,7 +2176,7 @@ def render_html(
     nested_supplied: bool = True,
     thumbnail_width: int = 280,
 ) -> str:
-    """Render the report.
+    """Render the report: plain-language summary first, drill-down sections collapsed.
 
     ``breakpoints`` are annotated rows from ``annotate_recurrence`` and
     ``nested`` annotated rows from ``annotate_nested_recurrence``.
@@ -1460,60 +2184,227 @@ def render_html(
     breakpoints = breakpoints or []
     nested = nested or []
     samples = [s["sample"] for s in summaries]
+    n = len(samples)
     flags = flag_result.flags
+    unusual = flag_result.unusual or [{} for _ in summaries]
+    z_scores = flag_result.z_scores or [{} for _ in summaries]
+    statuses = [sample_status(f, u) for f, u in zip(flags, unusual)]
+
+    bp_by_sample: dict[str, list[dict[str, str]]] = {}
+    for r in breakpoints:
+        bp_by_sample.setdefault(r["sample"], []).append(r)
+    nested_by_sample: dict[str, list[dict[str, str]]] = {}
+    for r in nested:
+        nested_by_sample.setdefault(r["sample"], []).append(r)
+    medians = {
+        col: contig_medians(by_reference, col) for col in ("aligned_reference_pct", "identity_pct")
+    }
+    reasons: list[list[Reason]] = [
+        explain_sample(
+            row, flags[i], unusual[i], z_scores[i], flag_result.stats,
+            ref_rows=by_reference.get(row["sample"], []),
+            query_rows=by_query.get(row["sample"], []),
+            bp_rows=bp_by_sample.get(row["sample"], []),
+            nested_rows=nested_by_sample.get(row["sample"], []),
+            medians=medians,
+            z_threshold=z_threshold,
+        )
+        for i, row in enumerate(summaries)
+    ]
+
+    n_assembly = sum(1 for s in summaries if not _is_na(s.get("assembly_length_bp")))
+    has_assembly = n_assembly > 0
+    shared = cluster_shared_features(samples, breakpoints, nested, recurrence_window_bp)
+
     out: list[str] = []
     w = out.append
 
+    title = f"ARGprep MAF QC — {n:,} sample{'s' if n != 1 else ''}"
     w('<!doctype html>\n<html lang="en">\n<head>\n')
     w('<meta charset="utf-8" />\n<meta name="viewport" content="width=device-width, initial-scale=1" />\n')
-    w("<title>ARGprep MAF QC</title>\n")
+    w(f"<title>{esc(title)}</title>\n")
     w(f"<style>{CSS}</style>\n")
+    w(f"<script>{OPEN_TARGET_JS}</script>\n")
     w("</head>\n<body>\n")
-    w("<h1>ARGprep MAF QC</h1>\n")
-    w(
-        f'<p>Generated: <code>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</code>'
-        f" &nbsp;|&nbsp; Samples: <code>{len(summaries):,}</code></p>\n"
-    )
 
-    # ── parameters ───────────────────────────────────────────────────────────
-    w("<h2>Parameters</h2>\n<table class=\"params\">\n")
-    w("<tr><th>Parameter</th><th>Value</th></tr>\n")
-    w(f"<tr><td>min_samples</td><td>{min_samples:,}</td></tr>\n")
-    w(f"<tr><td>z_threshold</td><td>{esc(f'{z_threshold:g}')}</td></tr>\n")
-    w(f"<tr><td>recurrence_window_bp</td><td>{recurrence_window_bp:,}</td></tr>\n")
-    for dest, metric in THRESHOLD_OPTIONS.items():
-        option = "--" + dest.replace("_", "-")
-        value = thresholds.get(metric)
-        shown = esc(f"{value:g}") if value is not None else '<span class="na">off</span>'
-        w(f"<tr><td>{esc(option)}</td><td>{shown}</td></tr>\n")
-    for col in ("min_block_bp", "overlap_tolerance_bp", "breakpoint_context_bp"):
-        distinct = list(dict.fromkeys(s[col] for s in summaries))
-        shown = ", ".join(fmt_value(v, col) for v in distinct)
-        if len(distinct) > 1:
-            shown += ' &nbsp;<strong>(differs between samples)</strong>'
-        w(f"<tr><td>{esc(col)}</td><td>{shown}</td></tr>\n")
-    w("</table>\n")
-    w(
-        "<p>Relative flags: direction-aware robust z = (value &minus; median) / scale, "
-        f"scale = max({MAD_TO_SD} &times; MAD, metric floor). A value is flagged when |z| "
-        f"&gt; {esc(f'{z_threshold:g}')} in the bad direction. <code>(mad0_floor)</code> "
-        "marks z-scores computed with MAD = 0, where the scale is the floor alone. Metrics "
-        "that are NA for a sample (e.g. assembly metrics without <code>--fasta</code>) are "
-        "not flagged for that sample.</p>\n"
-    )
-
-    skipped = flag_result.skipped
-    if len(summaries) < min_samples:
-        w(
-            f'<p class="note"><strong>Relative (cohort) flagging skipped:</strong> '
-            f"only {len(summaries):,} sample(s), fewer than min_samples = "
-            f"{min_samples:,}. Only absolute thresholds (if any) were applied.</p>\n"
-        )
+    # ── 1. title line ────────────────────────────────────────────────────────
+    w(f"<h1>{esc(title)}</h1>\n")
+    if n_assembly == n:
+        fasta = "assembly FASTAs used"
+    elif n_assembly == 0:
+        fasta = "no assembly FASTAs (alignment metrics only)"
     else:
-        partial = {m: n for m, n in skipped.items() if n > 0}
-        empty = [m for m, n in skipped.items() if n == 0]
+        fasta = f"assembly FASTAs used for {n_assembly:,} of {n:,} samples"
+    w(
+        f'<p class="meta">Generated {esc(datetime.now().strftime("%Y-%m-%d %H:%M"))} '
+        f"&middot; {esc(fasta)}</p>\n"
+    )
+
+    # ── 2. summary box ───────────────────────────────────────────────────────
+    n_ok = statuses.count(STATUS_OK)
+    n_review = statuses.count(STATUS_REVIEW)
+    n_unusual = statuses.count(STATUS_UNUSUAL)
+    w('<div class="summary-box">\n')
+    w(
+        f'<p class="counts"><span class="ok">{STATUS_ICONS[STATUS_OK]} {n_ok:,} normal</span>'
+        f' &middot; <span class="review">{STATUS_ICONS[STATUS_REVIEW]} {n_review:,} need review</span>'
+        f' &middot; <span class="unusual">{STATUS_ICONS[STATUS_UNUSUAL]} {n_unusual:,} unusual</span></p>\n'
+    )
+    cohort_parts: list[str] = []
+    phrase = _range_phrase(summaries, "aligned_reference_pct", ".1f", "%")
+    if phrase:
+        cohort_parts.append(f"aligned reference {phrase}")
+    phrase = _range_phrase(summaries, "identity_pct", ".2f", "%")
+    if phrase:
+        cohort_parts.append(f"identity {phrase}")
+    phrase = _range_phrase(summaries, "breakpoint_adjacencies", ",.0f")
+    if phrase:
+        cohort_parts.append(f"{phrase} breakpoints per sample")
+    nested_values = [parse_number(s.get("nested_blocks")) for s in summaries]
+    if any(v for v in nested_values if v is not None):
+        phrase = _range_phrase(summaries, "nested_blocks", ",.0f")
+        cohort_parts.append(f"{phrase} nested blocks per sample")
+    if cohort_parts:
+        w(f'<p class="cohort">Cohort: {esc(" · ".join(cohort_parts))}.</p>\n')
+    if shared:
+        n_bp_shared = sum(1 for f in shared if f.kind == "breakpoint")
+        n_nb_shared = len(shared) - n_bp_shared
+        bits = []
+        if n_bp_shared:
+            bits.append(f"{n_bp_shared:,} breakpoint{'s' if n_bp_shared != 1 else ''}")
+        if n_nb_shared:
+            bits.append(f"{n_nb_shared:,} nested block{'s' if n_nb_shared != 1 else ''}")
+        w(
+            f'<p class="cohort">Shared by two or more samples: {esc(" and ".join(bits))} '
+            '(see <a href="#shared">Shared features</a>).</p>\n'
+        )
+    if n < min_samples:
+        w(
+            f'<p class="note"><strong>Relative (cohort) flagging skipped:</strong> only '
+            f"{n:,} sample(s), fewer than min_samples = {min_samples:,}, so samples were not "
+            "compared with each other. Only absolute thresholds (if any) were applied.</p>\n"
+        )
+    w("</div>\n")
+
+    # ── 3. needs review / unusual cards ──────────────────────────────────────
+    if n_review:
+        w("<h2>Needs review</h2>\n")
+        for i, row in enumerate(summaries):
+            if statuses[i] == STATUS_REVIEW:
+                w(_card(row["sample"], _sample_anchor(samples, row["sample"]),
+                        STATUS_REVIEW, reasons[i]))
+    if n_unusual:
+        w("<h2>Unusual</h2>\n")
+        w(
+            '<p class="where">Unusual means a large deviation in the &ldquo;good&rdquo; '
+            "direction, e.g. far more of the reference aligned or far more similar to the "
+            "reference than the rest of the cohort. Not a failure, but check for admixture, "
+            "contamination or a mislabelled sample.</p>\n"
+        )
+        for i, row in enumerate(summaries):
+            if statuses[i] == STATUS_UNUSUAL:
+                w(_card(row["sample"], _sample_anchor(samples, row["sample"]),
+                        STATUS_UNUSUAL, reasons[i]))
+
+    # ── 4. compact sample table ──────────────────────────────────────────────
+    columns = COMPACT_COLUMNS_ASSEMBLY if has_assembly else COMPACT_COLUMNS_MAF_ONLY
+    w("<h2>Samples</h2>\n")
+    w('<div class="scroll"><table class="samples">\n<tr><th>Status</th><th>Sample</th>')
+    w("".join(f"<th>{esc(label)}</th>" for _, label in columns))
+    w("</tr>\n")
+    for i, row in enumerate(summaries):
+        sample = row["sample"]
+        st = statuses[i]
+        tip = " | ".join(r.sentence for r in reasons[i]) or STATUS_LABELS[st]
+        w(
+            f'<tr><td class="status {st}" title="{esc(tip)}">{STATUS_ICONS[st]}</td>'
+            f'<td><a href="#{esc(_sample_anchor(samples, sample))}">{esc(sample)}</a></td>'
+        )
+        by_metric = {r.metric: r for r in reasons[i]}
+        for col, _ in columns:
+            cell = _compact_cell(row, col)
+            hits = [by_metric[m] for m in COMPACT_CELL_METRICS.get(col, ()) if m in by_metric]
+            if col == "breakpoint_adjacencies" and has_assembly and "breakpoints_private" in by_metric:
+                hits.append(by_metric["breakpoints_private"])
+            if hits:
+                kind = STATUS_REVIEW if any(h.kind == STATUS_REVIEW for h in hits) else STATUS_UNUSUAL
+                cls = "flag" if kind == STATUS_REVIEW else "unusual"
+                ttl = esc(" | ".join(h.sentence for h in hits))
+                w(f'<td class="{cls}" title="{ttl}">{cell}</td>')
+            else:
+                w(f"<td>{cell}</td>")
+        w("</tr>\n")
+    w("</table></div>\n")
+    legend = (
+        f'<p class="where"><span class="icon ok">{STATUS_ICONS[STATUS_OK]}</span> normal '
+        f'&nbsp; <span class="icon review">{STATUS_ICONS[STATUS_REVIEW]}</span> needs review '
+        f'&nbsp; <span class="icon unusual">{STATUS_ICONS[STATUS_UNUSUAL]}</span> unusual. '
+        "Shaded cells: red = flagged, purple = unusual; hover for the reason. Aligned "
+        "percentages count only columns where both genomes have a base."
+    )
+    if has_assembly:
+        legend += " Telomeres = telomeric ends of the major (chromosome-scale) sequences / possible ends."
+    elif any(s.get("query_length_source") == "maf_srcsize" for s in summaries):
+        legend += (
+            " &dagger; query % computed against MAF <code>srcSize</code> (no query FASTA or "
+            "<code>.fai</code>), which overstates it."
+        )
+    w(legend + "</p>\n")
+
+    # ── 5. shared features ───────────────────────────────────────────────────
+    w('<h2 id="shared">Shared features</h2>\n')
+    w(
+        "<p>Breakpoints and nested blocks found in two or more samples at the same reference "
+        f"location (ends within {recurrence_window_bp:,} bp, grouped transitively). Shared "
+        "features usually reflect real shared structure (e.g. a common inversion) or "
+        "structure or misassembly specific to the reference, rather than the quality of "
+        "individual samples.</p>\n"
+    )
+    if n < 2:
+        w('<p class="na">Needs at least two samples.</p>\n')
+    elif not shared:
+        w('<p class="na">No breakpoint or nested block is shared between samples.</p>\n')
+    else:
+        shown = shared[:MAX_HTML_SHARED_FEATURES]
+        if len(shared) > len(shown):
+            w(
+                f'<p class="na">Showing the {len(shown):,} largest of {len(shared):,} shared '
+                "features; the All breakpoints / All nested blocks sections and the combined "
+                "TSVs list every row.</p>\n"
+            )
+        w('<div class="scroll"><table class="shared">\n<tr><th>Type</th><th>Reference region</th>'
+          "<th>Samples</th><th>Which</th></tr>\n")
+        for f in shown:
+            kind = f.kind + (f" ({f.detail})" if f.detail else "")
+            if len(f.samples) == n:
+                which = "all"
+            else:
+                which = ", ".join(
+                    f'<a href="#{esc(_sample_anchor(samples, s))}">{esc(s)}</a>' for s in f.samples
+                )
+            w(
+                f'<tr><td class="left">{esc(kind)}</td><td class="left">{esc(f.region)}</td>'
+                f"<td>{len(f.samples):,}/{n:,}</td><td class=\"left\">{which}</td></tr>\n"
+            )
+        w("</table></div>\n")
+
+    # ── 6. drill-down sections (collapsed) ───────────────────────────────────
+    w("<h2>Details</h2>\n")
+
+    # Distributions
+    w('<details class="drill" id="distributions">\n<summary>Distributions</summary>\n')
+    w(
+        '<p class="legend">One dot per sample (hover for name); dashed line = median.'
+        f'<span style="background:{COLOR_NORMAL}"></span>normal'
+        f'<span style="background:{COLOR_REVIEW}"></span>flagged (review)'
+        f'<span style="background:{COLOR_UNUSUAL}"></span>unusual</p>\n'
+    )
+    skipped = flag_result.skipped
+    if n >= min_samples:
+        partial = {m: k for m, k in skipped.items() if k > 0}
+        empty = [m for m, k in skipped.items() if k == 0]
         if partial:
-            items = ", ".join(f"<code>{esc(m)}</code> (n={n:,})" for m, n in partial.items())
+            items = ", ".join(f"<code>{esc(m)}</code> (n={k:,})" for m, k in partial.items())
             w(
                 f'<p class="note"><strong>Relative flagging skipped</strong> for metrics with '
                 f"fewer than min_samples = {min_samples:,} non-NA values: {items}.</p>\n"
@@ -1521,45 +2412,17 @@ def render_html(
         if empty:
             items = ", ".join(f"<code>{esc(m)}</code>" for m in empty)
             w(f'<p class="na">Not available for any sample (not flagged): {items}.</p>\n')
+    for metric in FLAG_DIRECTIONS:
+        values = [parse_number(s.get(metric)) for s in summaries]
+        if all(v is None for v in values):
+            continue
+        w(svg_strip_plot(metric, samples, values, [metric in f for f in flags],
+                         [metric in u for u in unusual]))
+        w("\n")
+    w("</details>\n")
 
-    # ── primary (alignment) table ────────────────────────────────────────────
-    w("<h2>Alignment</h2>\n")
-    w(
-        "<p>Flagged cells are highlighted; hover for the reason. Aligned percentages count "
-        "only columns where both genomes have a base (see definitions). &dagger; marks "
-        "query percentages computed against MAF <code>srcSize</code> (no query FASTA or "
-        "<code>.fai</code>), which overstates them.</p>\n"
-    )
-    w(_sample_table(summaries, flags, samples, PRIMARY_TABLE_COLUMNS, "samples", flags_column=True))
-
-    # ── assembly ─────────────────────────────────────────────────────────────
-    w("<h2>Assembly</h2>\n")
-    has_assembly = any(not _is_na(s.get("assembly_length_bp")) for s in summaries)
-    if has_assembly:
-        w(
-            "<p>Query assembly statistics computed from the FASTA given to "
-            "<code>maf_stats.py --fasta</code>; independent of alignment. Samples run "
-            "without a FASTA show NA.</p>\n"
-        )
-        w(_sample_table(summaries, flags, samples, ASSEMBLY_TABLE_COLUMNS, "assembly",
-                        flags_column=False))
-    else:
-        w(
-            '<p class="na">No sample has assembly statistics (run <code>maf_stats.py '
-            "--fasta</code> with the query assembly to get contiguity, N content, GC, "
-            "soft-masking, telomeres and unaligned contigs).</p>\n"
-        )
-    w(
-        '<h3>Contiguity from the MAF</h3>\n<p class="na">From the MAF: aligned contigs only, a '
-        "lower bound on fragmentation. Unaligned contigs are invisible here. For "
-        "chromosome-scale assemblies the aligned-contig N50 is essentially a chromosome "
-        "length and says little about contiguity; use the contig N50 above.</p>\n"
-    )
-    w(_sample_table(summaries, flags, samples, MAF_CONTIGUITY_COLUMNS, "maf-contiguity",
-                    flags_column=False))
-
-    # ── breakpoints ──────────────────────────────────────────────────────────
-    w("<h2>Breakpoints</h2>\n")
+    # All breakpoints
+    w('<details class="drill" id="all-breakpoints">\n<summary>All breakpoints</summary>\n')
     w(
         "<p>A breakpoint is an adjacent pair of blocks along a query contig with a strand "
         "flip, a reference-contig jump, or out-of-order reference coordinates. "
@@ -1580,14 +2443,14 @@ def render_html(
     )
     if not breakpoints_supplied:
         w('<p class="na">No breakpoint tables were supplied (<code>--breakpoints</code>).</p>\n')
-    if breakpoints_supplied:
+    else:
         w(_mismatch_note(
             _count_mismatches(summaries, breakpoints, "breakpoint_adjacencies"),
             "Breakpoint", "breakpoint files",
         ))
     if breakpoints:
         n_recurrent = sum(1 for r in breakpoints if r.get("recurrent") == "true")
-        if len(samples) >= 2:
+        if n >= 2:
             w(
                 f"<p>{len(breakpoints):,} breakpoint(s) across samples; "
                 f"{n_recurrent:,} recurrent. Recurrent rows are listed first and shaded.</p>\n"
@@ -1602,12 +2465,14 @@ def render_html(
         w("</div>\n")
     elif breakpoints_supplied:
         w('<p class="na">No breakpoints in any sample.</p>\n')
+    w("</details>\n")
 
-    # ── nested blocks ────────────────────────────────────────────────────────
-    w("<h2>Nested (secondary/transposed) alignments</h2>\n")
+    # All nested blocks
+    w('<details class="drill" id="all-nested">\n<summary>All nested blocks</summary>\n')
     w(
         "<p>A <em>nested block</em> is a block whose forward query interval lies inside a "
-        "larger block's query interval: the same query sequence aligned in two places. "
+        "larger block's query interval: the same query sequence aligned in two places "
+        "(a secondary or transposed alignment). "
         "Nested blocks are <strong>excluded from the breakpoint walk</strong> (otherwise they "
         "appear as spurious strand flips with very long junctions) and listed here, each "
         "with the reference location of its containing block.</p>\n"
@@ -1628,7 +2493,7 @@ def render_html(
         ))
     if nested:
         n_recurrent = sum(1 for r in nested if r.get("recurrent") == "true")
-        if len(samples) >= 2:
+        if n >= 2:
             w(
                 f"<p>{len(nested):,} nested block(s) across samples; {n_recurrent:,} "
                 "recurrent. Recurrent rows are listed first and shaded.</p>\n"
@@ -1643,53 +2508,77 @@ def render_html(
         w("</div>\n")
     elif nested_supplied:
         w('<p class="na">No nested blocks in any sample.</p>\n')
+    w("</details>\n")
 
-    # ── strip plots ──────────────────────────────────────────────────────────
-    w("<h2>Distributions across samples</h2>\n")
+    # Assembly metrics (or MAF-only contiguity)
+    heading = "Assembly metrics" if has_assembly else "Contiguity (from the MAF only)"
+    w(f'<details class="drill" id="assembly">\n<summary>{esc(heading)}</summary>\n')
+    if has_assembly:
+        w(
+            "<p>Query assembly statistics computed from the FASTA given to "
+            "<code>maf_stats.py --fasta</code>; independent of alignment. Samples run "
+            "without a FASTA show NA.</p>\n"
+        )
+        w(_sample_table(summaries, flags, samples, ASSEMBLY_TABLE_COLUMNS, "assembly",
+                        flags_column=False, unusual=unusual))
+    else:
+        w(
+            '<p class="na">No sample has assembly statistics (run <code>maf_stats.py '
+            "--fasta</code> with the query assembly to get contiguity, N content, GC, "
+            "soft-masking, telomeres and unaligned contigs).</p>\n"
+        )
     w(
-        '<p class="legend">One dot per sample (hover for name); dashed line = median.'
-        '<span style="background:#4C78A8"></span>not flagged'
-        '<span style="background:#E45756"></span>flagged</p>\n'
+        '<h3>Contiguity from the MAF</h3>\n<p class="na">From the MAF: aligned contigs only, a '
+        "lower bound on fragmentation. Unaligned contigs are invisible here. For "
+        "chromosome-scale assemblies the aligned-contig N50 is essentially a chromosome "
+        "length and says little about contiguity; use the contig N50 above.</p>\n"
     )
-    for metric in FLAG_DIRECTIONS:
-        values = [parse_number(s.get(metric)) for s in summaries]
-        if all(v is None for v in values):
-            continue
-        flagged = [metric in f for f in flags]
-        w(svg_strip_plot(metric, samples, values, flagged))
-        w("\n")
+    w(_sample_table(summaries, flags, samples, MAF_CONTIGUITY_COLUMNS, "maf-contiguity",
+                    flags_column=False))
+    w("</details>\n")
 
-    # ── per-sample details ───────────────────────────────────────────────────
-    bp_by_sample: dict[str, list[dict[str, str]]] = {}
-    for r in breakpoints:
-        bp_by_sample.setdefault(r["sample"], []).append(r)
-    nested_by_sample: dict[str, list[dict[str, str]]] = {}
-    for r in nested:
-        nested_by_sample.setdefault(r["sample"], []).append(r)
-
-    w("<h2>Per-sample detail</h2>\n")
-    for row, sample_flags in zip(summaries, flags):
+    # Per-sample detail
+    w('<details class="drill" id="per-sample">\n<summary>Per-sample detail</summary>\n')
+    w(
+        "<p>All alignment metrics, one row per sample. Flagged cells red, unusual cells "
+        "purple; hover for the raw reason. &dagger; marks query percentages computed "
+        "against MAF <code>srcSize</code> (no query FASTA or <code>.fai</code>), which "
+        "overstates them.</p>\n"
+    )
+    w(_sample_table(summaries, flags, samples, PRIMARY_TABLE_COLUMNS, "alignment",
+                    flags_column=True, unusual=unusual))
+    for i, row in enumerate(summaries):
         sample = row["sample"]
-        n_flags = sum(len(v) for v in sample_flags.values())
+        st = statuses[i]
         w(f'<details id="{esc(_sample_anchor(samples, sample))}">\n')
         aligned = fmt_value(row.get("aligned_reference_pct"), "aligned_reference_pct")
         ident = fmt_value(row.get("identity_pct"), "identity_pct")
         pct = lambda cell: cell if "NA" in cell else cell + "%"  # noqa: E731
         w(
-            f"<summary>{esc(sample)}"
-            f" &mdash; aligned ref {pct(aligned)}"
+            f'<summary><span class="icon {st}">{STATUS_ICONS[st]}</span> {esc(sample)}'
+            f" &mdash; {esc(STATUS_LABELS[st])}"
+            f" &nbsp;|&nbsp; aligned ref {pct(aligned)}"
             f" &nbsp;|&nbsp; identity {pct(ident)}"
             f" &nbsp;|&nbsp; {fmt_value(row.get('breakpoint_adjacencies'), 'breakpoint_adjacencies')}"
-            f" breakpoint adj. &nbsp;|&nbsp; {n_flags} flag(s)</summary>\n"
+            f" breakpoint adj.</summary>\n"
         )
+        if reasons[i]:
+            w('<section class="reasons">\n<h3>Why</h3>\n')
+            w(_reason_list(reasons[i]))
+            w("</section>\n")
 
         w('<table class="sample-summary">\n<tr><th>Metric</th><th>Value</th></tr>\n')
+        w(f'<tr><td>status</td><td class="status {st}">{esc(st)}</td></tr>\n')
         for col in OUTPUT_SUMMARY_COLUMNS[1:]:
-            reasons = sample_flags.get(col)
+            flagged = flags[i].get(col)
+            odd = unusual[i].get(col)
             cell = fmt_value(row.get(col), col)
-            if reasons:
-                tip = "; ".join(f"{col}:{r}" for r in reasons)
+            if flagged:
+                tip = "; ".join(f"{col}:{r}" for r in flagged)
                 w(f'<tr><td>{esc(col)}</td><td class="flag" title="{esc(tip)}">{cell}</td></tr>\n')
+            elif odd:
+                tip = "; ".join(f"{col}:{r}" for r in odd)
+                w(f'<tr><td>{esc(col)}</td><td class="unusual" title="{esc(tip)}">{cell}</td></tr>\n')
             else:
                 w(f"<tr><td>{esc(col)}</td><td>{cell}</td></tr>\n")
         w("</table>\n")
@@ -1747,22 +2636,23 @@ def render_html(
         if plots:
             w('<div class="thumbs">\n')
             for r in plots:
-                path = esc(r["dotplot"].strip())
-                contig = esc(r["reference_contig"])
                 bp = fmt_value(r.get("breakpoint_adjacencies"), "breakpoint_adjacencies")
-                w(
-                    f'<figure><a href="{path}"><img src="{path}" loading="lazy" '
-                    f'width="{thumbnail_width}" alt="{contig} dotplot"></a>'
-                    f"<figcaption>{contig} ({bp} breakpoint adj.)</figcaption></figure>\n"
-                )
+                contig = esc(r["reference_contig"])
+                w(_thumb(r["dotplot"].strip(), r["reference_contig"], thumbnail_width,
+                         f"{contig} ({bp} breakpoint adj.)"))
             w("</div>\n")
         else:
             w('<p class="na">No dotplots drawn for this sample.</p>\n')
         w("</section>\n")
         w("</details>\n")
+    w("</details>\n")
 
-    # ── definitions ──────────────────────────────────────────────────────────
-    w("<h2>Metric definitions</h2>\n")
+    # Metric definitions
+    w('<details class="drill" id="definitions">\n<summary>Metric definitions</summary>\n')
+    w('<dl class="defs">\n')
+    for name, definition in STATUS_DEFINITIONS:
+        w(f"<dt>{esc(name)}</dt><dd>{definition}</dd>\n")
+    w("</dl>\n")
     w(
         '<p class="note"><strong>Aligned versus block-span metrics.</strong> '
         "<code>aligned_*</code> counts bases in columns where both rows have a base. "
@@ -1780,10 +2670,42 @@ def render_html(
         direction = FLAG_DIRECTIONS.get(name)
         extra = ""
         if direction:
-            extra = f" <em>Flagged when unusually {'low' if direction == 'low' else 'high'}.</em>"
+            other = "high" if direction == "low" else "low"
+            extra = (f" <em>Flagged when unusually {direction}; marked unusual when "
+                     f"unusually {other}.</em>")
         # Definitions are static trusted HTML; names are escaped.
         w(f"<dt>{esc(name)}</dt><dd>{definition}{extra}</dd>\n")
     w("</dl>\n")
+    w("</details>\n")
+
+    # Parameters
+    w('<details class="drill" id="parameters">\n<summary>Parameters</summary>\n')
+    w('<table class="params">\n<tr><th>Parameter</th><th>Value</th></tr>\n')
+    w(f"<tr><td>min_samples</td><td>{min_samples:,}</td></tr>\n")
+    w(f"<tr><td>z_threshold</td><td>{esc(f'{z_threshold:g}')}</td></tr>\n")
+    w(f"<tr><td>recurrence_window_bp</td><td>{recurrence_window_bp:,}</td></tr>\n")
+    for dest, metric in THRESHOLD_OPTIONS.items():
+        option = "--" + dest.replace("_", "-")
+        value = thresholds.get(metric)
+        shown = esc(f"{value:g}") if value is not None else '<span class="na">off</span>'
+        w(f"<tr><td>{esc(option)}</td><td>{shown}</td></tr>\n")
+    for col in ("min_block_bp", "overlap_tolerance_bp", "breakpoint_context_bp"):
+        distinct = list(dict.fromkeys(s[col] for s in summaries))
+        shown = ", ".join(fmt_value(v, col) for v in distinct)
+        if len(distinct) > 1:
+            shown += ' &nbsp;<strong>(differs between samples)</strong>'
+        w(f"<tr><td>{esc(col)}</td><td>{shown}</td></tr>\n")
+    w("</table>\n")
+    w(
+        "<p>Relative flags: direction-aware robust z = (value &minus; median) / scale, "
+        f"scale = max({MAD_TO_SD} &times; MAD, metric floor). A value is flagged (review) "
+        f"when |z| &gt; {esc(f'{z_threshold:g}')} in the bad direction and marked unusual "
+        "when |z| exceeds it in the good direction. <code>(mad0_floor)</code> "
+        "marks z-scores computed with MAD = 0, where the scale is the floor alone. Metrics "
+        "that are NA for a sample (e.g. assembly metrics without <code>--fasta</code>) are "
+        "not flagged for that sample.</p>\n"
+    )
+    w("</details>\n")
     w("</body>\n</html>\n")
     return "".join(out)
 
@@ -1875,7 +2797,7 @@ def build_report(
     flag_result = compute_flags(
         summaries, min_samples=min_samples, z_threshold=z_threshold, thresholds=thresholds
     )
-    write_summary_tsv(out_tsv, summaries, flag_result.flags)
+    write_summary_tsv(out_tsv, summaries, flag_result.flags, flag_result.unusual)
     write_breakpoints_tsv(out_breakpoints_tsv, annotated)
     write_nested_tsv(out_nested_tsv, nested_annotated)
     page = render_html(
