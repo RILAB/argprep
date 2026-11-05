@@ -8,6 +8,11 @@ v1.0 was a full rewrite from the legacy TASSEL/gVCF/GATK pipeline — the
 pre-v1.0 (`v0.x`) entries at the bottom describe that older lineage and do not
 carry forward to the v1.x series.
 
+## Unreleased
+
+- Added `scripts/popstats.py`, a standalone helper that computes pi, Watterson's theta, Tajima's D and a folded, hypergeometrically downsampled SFS from an aligned FASTA with missing data (for example the output of `window_to_fasta.py` or `maf_to_fasta.py`). Per-site sample size is respected: `--min-seqs` filters sites, and pi and theta use each site's own number of called sequences. Optional sliding windows via `--window` / `--overlap`. Verified against tskit on msprime loci with varying sample size (`tests/test_popstats_msprime.py`).
+- Documentation for the standalone helper scripts (`window_to_fasta.py`, `maf_to_fasta.py`, `simulate_msprime_indels.py`, and the new `popstats.py`) moved from the main README to `scripts/README.md`.
+
 ## v1.11-beta.1 (pre-release)
 
 The new `maf_qc` stage is in **beta**: metric definitions, flag thresholds, the
