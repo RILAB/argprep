@@ -1,6 +1,6 @@
 # ARGprep Pipeline 
 
-This repository provides a Snakemake workflow for processing AnchorWave MAFs directly into per-contig site outputs. The workflow emits all-sites VCFs, variant-only VCFs, and BED masks from the alignments. Written with the aid of [Codex](https://openai.com/codex/) and [Claude](https://claude.ai/). Note that v1.0 was a major rewrite from v0.4, and no longer uses Tassel or GATK. 
+This repository provides a Snakemake workflow for processing AnchorWave MAFs directly into per-contig site outputs. The workflow emits all-sites VCFs, variant-only VCFs, and BED masks from the alignments. Written with the aid of [Codex](https://openai.com/codex/) and [Claude](https://claude.ai/). 
 
 ![ARGprep overview: per-sample AnchorWave MAFs are projected onto reference coordinates, every site is called and filtered, and per-contig all-sites VCFs, variant VCFs, and BED masks are produced for ARG inference](docs/graphical_abstract.png)
 
@@ -35,6 +35,8 @@ Required keys:
 
 - `maf_dir`: directory containing `*.maf` or `*.maf.gz`
 - `reference_fasta`: reference FASTA path
+
+**Input ploidy.** ARGprep treats each MAF as a single haplotype. For diploid individuals with haplotype-resolved assemblies, split the two haplotypes and align each to the reference separately (for example `indA_hap1.maf`, `indA_hap2.maf`), so that each haplotype is a sample. One workflow that produces compatible per-sample MAFs with AnchorWave is [anchorwave-snakemake](https://github.com/mufernando/anchorwave-snakemake); use its whole-genome `<target>.maf` output.
 
 Optional path keys:
 

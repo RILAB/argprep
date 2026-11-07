@@ -26,4 +26,4 @@ The masked-site categories (`masked_ref_non_acgt`, `masked_indel_adjacent`, `mas
 
 ## Genotype encoding and ploidy
 
-ARGprep is built for haploid samples. Each `GT` field in both VCFs is a single integer (`0` for the reference allele, `1`/`2`/... for ALTs in `ALT` order, `.` for missing). With `add_ref: true`, the synthetic `REF` sample is emitted as `0` at every retained site.
+ARGprep is built for haploid samples. Each `GT` field in both VCFs is a single integer (`0` for the reference allele, `1`/`2`/... for ALTs in `ALT` order, `.` for missing). With `add_ref: true`, the synthetic `REF` sample is emitted as `0` at every retained site. Because each MAF is one haplotype, a diploid individual is represented by two samples (one per phased haplotype assembly, aligned separately); ARGprep does not phase or split diploid assemblies itself.
