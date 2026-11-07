@@ -8,6 +8,7 @@ dependencies:
   - numpy
   - matplotlib
   - msprime
+  - scipy
   - samtools
   - snakemake>=8.0.0
   - snakemake-executor-plugin-cluster-generic

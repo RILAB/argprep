@@ -11,6 +11,7 @@ carry forward to the v1.x series.
 ## Unreleased
 
 - Added `scripts/popstats.py`, a standalone helper that computes pi, Watterson's theta, Tajima's D and a folded, hypergeometrically downsampled SFS from an aligned FASTA with missing data (for example the output of `window_to_fasta.py` or `maf_to_fasta.py`). Per-site sample size is respected: `--min-seqs` filters sites, and pi and theta use each site's own number of called sequences. Optional sliding windows via `--window` / `--overlap`. Verified against tskit on msprime loci with varying sample size (`tests/test_popstats_msprime.py`).
+- Added `scipy` to `argprep.yml` (and so to the containers); it is used only by the `popstats.py` tests, which compare the projected SFS against tskit.
 - Documentation for the standalone helper scripts (`window_to_fasta.py`, `maf_to_fasta.py`, `simulate_msprime_indels.py`, and the new `popstats.py`) moved from the main README to `scripts/README.md`.
 
 ## v1.11-beta.1 (pre-release)
