@@ -212,7 +212,7 @@ steps = [
     ("prepare_reference", "index FASTA, reconcile\ncontig names"),
     ("split_sample_maf", "partition each MAF\nby contig (gzip)"),
     ("direct_maf_sites", "one job per contig,\nsingle pass over MAFs"),
-    ("summary_report", "aggregate stats,\nno VCF rescan"),
+    ("summary_report", "aggregate stats"),
 ]
 bw, gap, bx0, by = 27.5, 4.0, 4.0, 2.0
 for k, (name, sub) in enumerate(steps):
