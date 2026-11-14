@@ -9,11 +9,37 @@ v1.0 was a full rewrite from the legacy TASSEL/gVCF/GATK pipeline — the
 pre-v1.0 (`v0.x`) entries at the bottom describe that older lineage and do not
 carry forward to the v1.x series.
 
-## Unreleased
+## v1.12
 
-- Added `scripts/popstats.py`, a standalone helper that computes pi, Watterson's theta, Tajima's D and a folded, hypergeometrically downsampled SFS from an aligned FASTA with missing data (for example the output of `window_to_fasta.py` or `maf_to_fasta.py`). Per-site sample size is respected: `--min-seqs` filters sites, and pi and theta use each site's own number of called sequences. Optional sliding windows via `--window` / `--overlap`. Verified against tskit on msprime loci with varying sample size (`tests/test_popstats_msprime.py`).
-- Added `scipy` to `argprep.yml` (and so to the containers); it is used only by the `popstats.py` tests, which compare the projected SFS against tskit.
-- Documentation for the standalone helper scripts (`window_to_fasta.py`, `maf_to_fasta.py`, `simulate_msprime_indels.py`, and the new `popstats.py`) moved from the main README to `scripts/README.md`.
+`maf_qc` graduates from beta. It was introduced in `v1.11-beta.1`, has since been
+run by other users without reported problems, and is now a stable, supported
+target. Its description moved from the README to [docs/maf_qc.md](docs/maf_qc.md).
+
+### Upgrade note
+
+- **Expect a one-time rerun.** `split_sample_maf`, `direct_maf_sites` and
+  `summary_report` now carry a hash of their scripts as a param, as `maf_qc`
+  already did, so updating ARGprep reruns them instead of keeping outputs from
+  older code. The first run after upgrading will therefore probably redo the
+  per-contig jobs (not yet tested on a production-size run). Later runs only
+  rerun a rule when its scripts change.
+
+### New
+
+- `scripts/popstats.py`: a standalone helper that computes pi, Watterson's theta, Tajima's D and a folded, hypergeometrically downsampled SFS from an aligned FASTA with missing data (for example the output of `window_to_fasta.py` or `maf_to_fasta.py`). Per-site sample size is respected: `--min-seqs` filters sites, and pi and theta use each site's own number of called sequences. Optional sliding windows via `--window` / `--overlap`. Verified against tskit on msprime loci with varying sample size (`tests/test_popstats_msprime.py`).
+- `options.example.yaml`: a portable, site-neutral config template (`cp options.example.yaml options.yaml`).
+
+### Changed
+
+- `argprep.yml` now uses compatible-release ranges (Python 3.11, `numpy` 2, `snakemake` 8-9, and so on) instead of unpinned packages. `matplotlib-base` replaces `matplotlib` (headless), `gsl` is listed explicitly because `msprime` links it at runtime, and `scipy` is added for the `popstats.py` tests. Update an existing environment with `conda env update -n argprep -f argprep.yml --prune`.
+- The bundled `example_data/options.yaml` asks for 4 GB and 30 minutes instead of 96 GB and 72 hours, and no longer hardcodes a SLURM account or partition.
+- `maf_to_sites.py` no longer re-exports `MafRecord` (it lives in `scripts/common.py`, as noted for `v1.11-beta.1`); nothing in the repository used the re-export. `split_maf_by_contig.py` now imports from `common.py`.
+- Flag and status logic moved from `maf_stats_report.py` into `scripts/maf_stats_report_model.py`, and the MAF projection code into `scripts/maf_projection.py`. Behavior and outputs are unchanged. The QC report hash covers the new module.
+- Documentation: helper-script docs moved to `scripts/README.md`; `container_setup.md` now checks that `$SCRATCH` is set before using it as the cache directory.
+
+### Tests
+
+- Tests check that editing any script covered by a rule hash reruns that rule (splitter, site caller, projection helper, summary report, shared helper, QC report model).
 
 ## v1.11-beta.1 (pre-release)
 

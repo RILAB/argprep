@@ -1,7 +1,4 @@
-# MAF alignment QC (`maf_qc`, beta)
-
-> **Beta:** metric definitions, flag thresholds, report layout, and output
-> columns may change after user feedback.
+# MAF alignment QC (`maf_qc`)
 
 Run this QC-only target before the more expensive per-contig workflow:
 

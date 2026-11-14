@@ -202,7 +202,7 @@ snakemake --profile profiles/slurm --configfile options.yaml --rerun-incomplete
 
 When using the SLURM profile, set `slurm_account` and `slurm_partition` in your config file. Slurm defaults for other resources are defined in `profiles/slurm/config.yaml`. Parsing the MAFs is the most computationally expensive step in the pipeline, and direct-maf rule resources can be overridden in `options.yaml` (`maf_mem_mb`, `maf_time`). Site calling is single-threaded, so each per-contig job requests one core.
 
-### Check alignment quality first (`maf_qc`, beta)
+### Check alignment quality first (`maf_qc`)
 
 Before the expensive per-contig run, use the optional QC target to inspect
 alignment coverage, identity, indels, structural breakpoints, assembly quality,
