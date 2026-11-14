@@ -35,7 +35,7 @@ algorithms, rather than competing implementations of the same algorithm.
 | Indel encoding | Indel-overlapped (and optionally adjacent) reference positions go to BED mask | VCF records with anchor-base REF/ALT encoding plus `SVTYPE/SVLEN/END` |
 | Strand / inversion | Not handled at the calling layer — bases are projected as AnchorWave aligned them | Negative-strand blocks emit a leading `<INV>` record and add `INV_NEST=TRUE` to nested variants |
 | Chunking | Snakemake first splits each MAF by reference contig; site classification then processes 1 Mb reference-position chunks over mmap-backed per-sample arrays | Default 1 Mb alignment-column chunks with an "SV-safe boundary" search |
-| Genotype | Haploid integers (`0`, `1`, ..., `.` for missing) | Diploid phased (`1|1`) plus a custom `QI` FORMAT field encoding query coords + strand |
+| Genotype | Haploid integers (`0`, `1`, ..., `.` for missing) | Diploid phased (`1\|1`) plus a custom `QI` FORMAT field encoding query coords + strand |
 | VCF builder | Hand-written `##` header and tab-joined record lines | `noodles::vcf` typed builder |
 | QC outputs | Per-contig `site_summary.tsv` and `report_stats.tsv`, per-sample missing BEDs (plus a per-contig `sample.mask.bed`), BED mask, genome-wide `summary.html`; optional `maf_qc` per-sample MAF QC report | None beyond the VCF |
 
