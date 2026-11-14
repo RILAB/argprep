@@ -37,7 +37,7 @@ algorithms, rather than competing implementations of the same algorithm.
 | Chunking | Snakemake first splits each MAF by reference contig; site classification then processes 1 Mb reference-position chunks over mmap-backed per-sample arrays | Default 1 Mb alignment-column chunks with an "SV-safe boundary" search |
 | Genotype | Haploid integers (`0`, `1`, ..., `.` for missing) | Diploid phased (`1|1`) plus a custom `QI` FORMAT field encoding query coords + strand |
 | VCF builder | Hand-written `##` header and tab-joined record lines | `noodles::vcf` typed builder |
-| QC outputs | Per-contig `site_summary.tsv` and `report_stats.tsv`, per-sample missing BEDs (plus a per-contig `sample.mask.bed`), BED mask, genome-wide `summary.html`; optional (beta) `maf_qc` per-sample MAF QC report | None beyond the VCF |
+| QC outputs | Per-contig `site_summary.tsv` and `report_stats.tsv`, per-sample missing BEDs (plus a per-contig `sample.mask.bed`), BED mask, genome-wide `summary.html`; optional `maf_qc` per-sample MAF QC report | None beyond the VCF |
 
 ## How the core loop differs
 
@@ -89,8 +89,25 @@ and tag every nested variant with `INV_NEST=TRUE`.
 
 ## Example-data comparison rerun
 
-Rerun on 2026-07-05 with the bundled `example_data/example.maf/*.maf` files,
-ARGprep's current `scripts/maf_to_sites.py`, and `wgatools 1.1.0`.
+Rerun on 2026-11-13 with the bundled `example_data/example.maf/*.maf` files
+(8 samples, one 1 Mb contig).
+
+| Software | Version | How it was run |
+|---|---|---|
+| ARGprep | v1.12 (`scripts/maf_to_sites.py` at commit `0204aef`), Python 3.11 | all 8 samples together, settings below |
+| wgatools | 1.1.0 (bioconda) | `wgatools call --snp --svlen 50`, one run per sample MAF |
+
+wgatools 1.1.1 (released 2026-11-11) changes only `dotplot`; its `call` code
+is identical to 1.1.0.
+
+To reproduce, run on a compute node:
+
+```bash
+python scripts/compare_wgatools.py --wgatools /path/to/wgatools --out-dir OUT
+```
+
+It writes `comparison.md` and `comparison.json` (including both tools'
+versions) to `OUT` and exits non-zero if any shared call disagrees on REF/ALT.
 
 Two ARGprep settings are useful for interpreting the result:
 
@@ -98,14 +115,15 @@ Two ARGprep settings are useful for interpreting the result:
   `mask_indel_adjacent_snps: false`): ARGprep emitted 9,578 multi-sample
   variant records. Across the eight samples, every ARGprep non-reference SNP
   call was present in the corresponding wgatools single-sample VCF
-  (25,680 / 25,680 calls). wgatools emitted 5,114 additional SNP calls. These
-  are expected: wgatools calls from one pairwise alignment at a time, while
-  ARGprep masks a site if any other sample is missing at that reference base.
+  (25,680 / 25,680 calls, zero REF/ALT mismatches). wgatools emitted 5,114
+  additional SNP calls. These are expected: wgatools calls from one pairwise
+  alignment at a time, while ARGprep masks a site if any other sample is
+  missing at that reference base.
 - **Permissive missingness** (`max_missing_count: 8`,
   `mask_indel_adjacent_snps: false`): ARGprep emitted 11,867 multi-sample
-  variant records. All wgatools SNP positions and alleles were recovered by
-  ARGprep for every sample: 30,794 / 30,794 shared SNP calls, with zero REF/ALT
-  mismatches.
+  variant records. ARGprep and wgatools made exactly the same SNP calls for
+  every sample: 30,794 / 30,794 shared, with zero REF/ALT mismatches and no
+  calls unique to either tool.
 
 Per-sample SNP counts from the strict example setting:
 
@@ -121,9 +139,15 @@ Per-sample SNP counts from the strict example setting:
 | sample8 | 3,190 | 3,887 | 3,190 | 697 |
 | **Total** | **25,680** | **30,794** | **25,680** | **5,114** |
 
-wgatools also emitted 550 INS and 684 DEL records across the eight example
-VCFs. ARGprep intentionally represents indel-affected reference positions in
-the BED masks rather than as VCF indel records.
+The SNP counts are identical to those from the earlier rerun (2026-07-05,
+wgatools 1.1.0).
+
+wgatools also emitted 522 INS and 665 DEL records (all longer than 50 bp)
+across the eight example VCFs. The 2026-07-05 write-up reported 550 INS and
+684 DEL with the same wgatools version; how those were counted was not
+recorded, and lowering `--svlen` to 49 or 45 does not reproduce them. ARGprep
+intentionally represents indel-affected reference positions in the BED masks
+rather than as VCF indel records.
 
 ## Would they make the same SNP calls?
 
