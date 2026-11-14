@@ -5,3 +5,4 @@
 - Never ask whether to run `git commit` or `git push` after the user has already said "commit and push".
 - For Snakemake runs, use a longer command timeout to avoid premature termination.
 - Never commit or push SLURM output files (e.g., `slurm-*.out`) or Snakemake log files (e.g., `*.snakemake.log`, `.snakemake/log/*`).
+- `direct_maf` is the default branch on GitHub (not `main`; a stale `main` also exists). Push, open PRs and tag releases against `direct_maf`; do not suggest merging into `main`.
