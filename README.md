@@ -10,12 +10,22 @@ Ross-Ibarra, J. 2026. ARGprep: A pipeline to prepare pairwise whole-genome align
 
 If your use case is pairwise variant discovery (SNPs, large indels, inversions) rather than ARG-ready all-sites output, [wgatools](https://github.com/wjwei-handsome/wgatools) is a potential alternative. See [WGATOOLS_COMPARISON.md](WGATOOLS_COMPARISON.md) for a detailed comparison of the two approaches.
 
-> **Which version to use:** for production runs, check out the most recent stable release (`git checkout v1.10`). `v1.11-beta.1` is a pre-release that adds the [`maf_qc` alignment-QC stage](#check-alignment-quality-first-maf_qc-beta) for testing; feedback is welcome via [GitHub issues](https://github.com/RILAB/argprep/issues). See [changelog.md](changelog.md) for a per-version breakdown of changes.
+> **Which version to use:** for production runs, use the newest stable tag on
+> the [GitHub Releases page](https://github.com/RILAB/argprep/releases).
+> Pre-releases may include features such as the [`maf_qc` alignment-QC
+> stage](docs/maf_qc.md) for testing; feedback is welcome via [GitHub
+> issues](https://github.com/RILAB/argprep/issues). See
+> [changelog.md](changelog.md) for a per-version breakdown of changes.
 
 ## Requirements
 
 - Conda
 - The environment defined in `argprep.yml`
+
+The supported environment is Linux x86-64 with Python 3.11. Dependency ranges
+in `argprep.yml` admit compatible updates while excluding untested major
+versions. Containers are the most portable option when that environment is not
+available.
 
 ## Setup
 
@@ -24,11 +34,27 @@ conda env create -f argprep.yml
 conda activate argprep
 ```
 
+To update an existing environment to the dependency ranges tested by the
+current checkout:
+
+```bash
+conda env update -n argprep -f argprep.yml --prune
+```
+
+Environment creation and updates perform a dependency solve. On a shared HPC
+cluster, run that solve in a compute allocation and keep the environment and
+package cache on group storage rather than a quota-limited home directory.
+
 A Docker/Singularity setup option is also available. See [container setup](container_setup.md)
 
 ## Configure
 
-Create or edit a config file such as `options.yaml`.
+Copy the portable template and edit its input paths:
+
+```bash
+cp options.example.yaml options.yaml
+```
+
 The workflow requires `--configfile` and will fail if it is omitted.
 
 Required keys:
@@ -178,9 +204,9 @@ When using the SLURM profile, set `slurm_account` and `slurm_partition` in your 
 
 ### Check alignment quality first (`maf_qc`, beta)
 
-> **Beta (v1.11-beta.1):** metric definitions, flag thresholds, the report layout and output columns may change after user feedback.
-
-Before the expensive per-contig run, check each input MAF with the QC-only target:
+Before the expensive per-contig run, use the optional QC target to inspect
+alignment coverage, identity, indels, structural breakpoints, assembly quality,
+and cross-sample outliers:
 
 ```bash
 sbatch profiles/slurm/run-controller.sbatch options.yaml maf_qc
@@ -188,83 +214,15 @@ sbatch profiles/slurm/run-controller.sbatch options.yaml maf_qc
 sbatch profiles/slurm/run-controller.sbatch options.yaml
 ```
 
-`maf_qc` runs one SLURM job per sample (`scripts/maf_stats.py`), then one small job that builds the cross-sample report (`scripts/maf_stats_report.py`). It is not part of `rule all`. The main workflow neither runs nor waits for it, and finishing QC never starts the main analysis. Building the `maf_qc` DAG does not read the MAFs. The main workflow's automatic contig discovery does (see [#36](https://github.com/RILAB/argprep/issues/36)).
-
-Each sample's MAF is read once. QC keeps **alignment quality** and **assembly quality** apart. Alignment metrics come from the MAF alone. Assembly metrics need the query assembly FASTA (`query_fasta_dir`); without it they are `NA`, and the MAF-only view is used.
-
-Alignment metrics (always):
-
-- **Aligned bases.** Reference (and query) bases opposite a base in the other row, as bp and as % of the genome. This is the headline coverage figure. **Block span** (the union of block intervals) is reported too, but for AnchorWave it overstates alignment. Its blocks run between collinear anchors and can span tens of Mb, mostly as long indels. In a test on two teosinte genomes against B73 v5, blocks spanned about 94% of the reference, but only about 36% of reference bases were aligned base-to-base.
-- **Identity.** Matches ÷ columns where both bases are A/C/G/T, case-insensitive.
-- **Insertion and deletion columns.** Query base opposite a reference gap, and reference base opposite a query gap, each as % of alignment columns.
-- **Blocks and overlap.** Block count, `overlapping_reference_bp` and `overlapping_query_bp` (bases covered by more than one block; 0 for one-to-one alignments).
-- **Nested blocks.** A block whose query interval lies inside a larger block's: the same query sequence aligned in two places, often far apart on the reference. Seen in NAM vs B73 MAFs. Nested blocks are listed separately (`<sample>.nested_blocks.tsv`) and kept out of the breakpoint walk; otherwise each one would pair with its container as two fake strand flips. The report checks them for recurrence too: a nested block shared across samples at the same reference coordinates may reflect structure specific to the reference.
-- **Structural breakpoints along each query contig.** Strand flips, reference-contig jumps and out-of-order blocks are each counted on their own, plus the number of adjacencies with any of the three, per Gb aligned. Each breakpoint also gets a location: `contig_end` (within `maf_stats_breakpoint_context_bp`, default 1 Mb, of a query contig end; points to assembly or scaffolding), `n_gap` (next to an N run; needs the FASTA), or `interior` (real structure or misalignment; telling those apart needs read data). The report also checks each breakpoint for **recurrence**: whether other samples have a breakpoint at matching reference coordinates. Shared breakpoints are more likely biological, such as a known inversion; private ones are more likely artifacts.
-- **MAF-only contiguity.** Number and N50 of query contigs with at least one alignment. Contigs with no alignment don't appear in the MAF, so this is a lower bound on fragmentation.
-- **Dotplots.**
-
-Assembly metrics (with the FASTA):
-
-- **Size and contiguity.** Total length and sequence count. **Scaffold** N50/L50 is over FASTA records. **Contig** N50/L50 is over the pieces left after splitting at N gaps, and is the real contiguity measure: a chromosome-scale scaffold can contain hundreds of gaps.
-- **Ns.** N bases, and the number of N gaps (runs of at least 10 N; shorter runs are ambiguous bases).
-- **GC and soft-masking.** Soft-masked % is `NA` when the FASTA has no lowercase at all, i.e. it was never soft-masked.
-- **Telomeres.** A sequence end is telomeric when at least half of its terminal 1 kb is plant telomere repeat (`TTTAGGG`/`CCCTAAA`). Ends are counted on the **major** sequences (those at least 10% as long as the longest one: for a chromosome-level assembly, the chromosomes, however much small unplaced sequence there is), reported as e.g. "14 / 20". Small scaffolds carrying telomere repeat are counted separately.
-- **Unaligned sequences.** Size and N/soft-masked content of sequences with no alignment. The FASTA's lengths also become the query-coverage denominator.
-
-Identity, aligned bases, and insertion/deletion counts are summed over columns, so overlapping or secondary blocks are counted more than once. Block span is union-based. `overlapping_reference_bp` shows how much duplication there is.
-
-The parser is strict. Each of the following stops the job with the file and block number in the error:
-
-- a block without exactly one reference row and one query row;
-- a size field that disagrees with the ungapped sequence;
-- coordinates outside `srcSize`;
-- inconsistent `srcSize` values;
-- an unknown or ambiguous reference contig (matched exactly, or by the pipeline's contig-name normalization when that gives a single match);
-- a minus-strand reference row;
-- an empty MAF.
-
-Outputs, under `results/maf_stats/`:
-
-- `maf_stats.html` — the report. It has a flagged alignment table, an assembly table, a cross-sample breakpoint table with recurrence, a strip plot of each flagged metric, per-sample drill-down (reference contigs, query contigs, breakpoints, dotplots), and metric definitions.
-- `maf_stats.tsv` — one row per sample with every genome-wide metric, the counts of recurrent and private breakpoints, and a `flags` column.
-- `maf_stats.breakpoints.tsv` — every breakpoint from every sample, with its location and the number of other samples sharing it.
-- `maf_stats.nested_blocks.tsv` — every nested block from every sample, with the number of other samples sharing it.
-- `<sample>.maf_stats.tsv`, `<sample>.by_reference_contig.tsv`, `<sample>.by_query_contig.tsv`, `<sample>.breakpoints.tsv`, `<sample>.nested_blocks.tsv` — per-sample detail. With the FASTA, the query-contig table lists every assembly contig, aligned or not.
-- `dotplots/<sample>/<reference_contig>.png` — 800×800 dotplots. Forward blocks are blue and reverse blocks red. Query contigs are stacked in labelled bands.
-
-How samples are flagged:
-
-- **Relative flags.** A sample is flagged when its robust z-score (median/MAD) passes 3.5 in the bad direction. Bad when low: aligned reference and query %, identity, assembly contig N50. Bad when high: reference and query overlap, breakpoints per Gb aligned, reference-contig jumps, private breakpoints, assembly N %. Each metric's scale has a floor, so near-constant cohorts aren't flagged for trivial differences. Relative flags need at least 5 samples with a value for that metric, so assembly metrics are flagged only across the samples that have a FASTA.
-- **Absolute thresholds.** These are optional and off by default, because expected identity and fragmentation depend on divergence.
-
-QC config keys (all optional):
-
-| Key | Default | Meaning |
-|---|---|---|
-| `query_fasta_dir` | unset | Directory of query assembly FASTAs named `<sample>.fa`, `.fasta`, `.fna` (optionally `.gz`). Turns on the assembly metrics and the `n_gap` breakpoint class, and supplies query lengths. When set, every sample needs exactly one. |
-| `query_fai_dir` | unset | Lengths only, for when the FASTAs aren't available but `.fai` files are. Mutually exclusive with `query_fasta_dir`. Directory of query `.fai` files named `<sample>.fai`, `<sample>.fa.fai`, `<sample>.fasta.fai`, `<sample>.fna.fai`, `<sample>.fa.gz.fai` or `<sample>.fasta.gz.fai`. When set, every sample needs exactly one. With neither option, query coverage uses only query contigs present in the MAF, which **overstates** it; the report marks this with †. |
-| `maf_stats_min_block_bp` | `0` | Blocks shorter than this (reference span) are ignored when counting breakpoints only. |
-| `maf_stats_overlap_tolerance_bp` | `0` | Reference overlap allowed between adjacent same-strand blocks before they count as out of order. |
-| `maf_stats_breakpoint_context_bp` | `1000000` | A breakpoint this close to a query contig end (or N gap) is classed `contig_end` (or `n_gap`). |
-| `maf_stats_recurrence_window_bp` | `500000` | Breakpoints in two samples are the same when both junction ends fall within this distance on the same reference contigs. |
-| `maf_stats_dotplots` | `flagged` | `flagged` (reference contigs with breakpoints, densest first), `all`, or `false`. |
-| `maf_stats_dotplot_max` | `20` | Cap on `flagged` plots per sample; `0` = no cap. |
-| `maf_stats_flag_min_aligned_reference`, `maf_stats_flag_min_identity`, `maf_stats_flag_max_breakpoints_per_gb` | unset | Absolute flag thresholds (aligned reference %, identity %, breakpoints per Gb aligned). |
-| `maf_stats_threads`, `maf_stats_mem_mb`, `maf_stats_time` | `1`, `16000`, `12:00:00` | Per-sample job resources. Provisional: a 7.7 GB AnchorWave MAF took about 1 minute and peaked near 10 GB before block comparisons were chunked. Not yet re-measured, and not measured with a FASTA. |
-| `maf_stats_report_mem_mb`, `maf_stats_report_time` | `4000`, `00:30:00` | Report job resources. |
-
-`scripts/maf_stats.py` also runs on its own, one sample at a time; `--fasta` is optional:
-
-```bash
-python scripts/maf_stats.py --maf S.maf.gz --reference-fai ref.fa.fai --sample S \
-  --out-dir qc [--fasta S.fa.gz]
-```
-
-`scripts/maf_dotplot.py` also works on its own for quick plots: `python scripts/maf_dotplot.py --maf S.maf.gz --reference-fai ref.fa.fai --out-dir plots`. It exits non-zero if any input fails.
+The full metric definitions, strict validation rules, outputs, flagging behavior,
+configuration table, and standalone commands are in the dedicated
+[MAF QC guide](docs/maf_qc.md).
 
 ### Try it on the bundled example
 
-`example_data/` ships with a small simulated dataset (`example.maf/`, `example.reference.fa`) and a matching `options.yaml`. From the repo root:
+`example_data/` ships with a small simulated dataset (`example.maf/`,
+`example.reference.fa`) and a matching lightweight, site-neutral
+`options.yaml`. From the repo root:
 
 ```bash
 snakemake -j 4 --configfile example_data/options.yaml

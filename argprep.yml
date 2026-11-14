@@ -4,12 +4,19 @@ channels:
   - bioconda
   - defaults
 dependencies:
-  - python=3.11
-  - numpy
-  - matplotlib
-  - msprime
-  - scipy
-  - samtools
-  - snakemake>=8.0.0
-  - snakemake-executor-plugin-cluster-generic
-  - pytest
+  # Compatible release ranges: reproducible enough to avoid surprise major
+  # upgrades without imposing a platform-specific lock file.
+  - python>=3.11,<3.12
+  - numpy>=2.0,<3
+  # Headless plotting runtime; avoids the GUI toolkit pulled by the matplotlib
+  # metapackage while providing the same Python plotting API.
+  - matplotlib-base>=3.8,<4
+  - msprime>=1.3,<2
+  # msprime's compiled extension links libgsl at runtime; make that transitive
+  # requirement explicit so environment pruning cannot remove it.
+  - gsl>=2.8,<3
+  - scipy>=1.11,<2
+  - samtools>=1.19,<2
+  - snakemake>=8.0,<10
+  - snakemake-executor-plugin-cluster-generic>=1.0,<2
+  - pytest>=8,<10

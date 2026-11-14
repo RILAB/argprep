@@ -38,10 +38,14 @@ Run tests inside the container:
 singularity exec argprep.sif bash -c 'cd /opt/argprep && pytest -q -p no:cacheprovider'
 ```
 
-Our singularity setup defaults to `/tmp` but for HPC users that want to use some variable made available by their HPC admins like `$SCRATCH` then you could re-write your ENV variable:
+The image defaults its cache to `/tmp`. To use a cluster-provided `$SCRATCH`
+directory instead, first require that the variable is defined and then pass the
+quoted cache path into the container:
 
 ```bash
-singularity exec --env XDG_CACHE_HOME=$SCRATCH/argprep_cache argprep.sif \
+: "${SCRATCH:?Set SCRATCH to a writable scratch directory}"
+mkdir -p "$SCRATCH/argprep_cache"
+singularity exec --env "XDG_CACHE_HOME=$SCRATCH/argprep_cache" argprep.sif \
   snakemake -j 8 --snakefile /opt/argprep/Snakefile --configfile options.yaml
 ```
 

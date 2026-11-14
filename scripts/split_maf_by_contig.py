@@ -6,12 +6,10 @@ import sys
 from pathlib import Path
 
 try:
-    from scripts.common import normalize_contig, open_text
-    from scripts.maf_to_sites import MafRecord, iter_maf_blocks
+    from scripts.common import MafRecord, iter_maf_blocks, normalize_contig, open_text
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.common import normalize_contig, open_text
-    from scripts.maf_to_sites import MafRecord, iter_maf_blocks
+    from scripts.common import MafRecord, iter_maf_blocks, normalize_contig, open_text
 
 
 def parse_args() -> argparse.Namespace:

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import html
-import math
 import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,11 +23,55 @@ from pathlib import Path
 
 try:
     from scripts.common import open_text
+    from scripts.maf_stats_report_model import (
+        DEFAULT_MIN_SAMPLES,
+        DEFAULT_RECURRENCE_WINDOW_BP,
+        DEFAULT_Z_THRESHOLD,
+        FLAG_DIRECTIONS,
+        MAD_TO_SD,
+        NA_VALUES,
+        STATUS_ICONS,
+        STATUS_LABELS,
+        STATUS_OK,
+        STATUS_REVIEW,
+        STATUS_UNUSUAL,
+        THRESHOLD_OPTIONS,
+        FlagResult,
+        MetricStats,
+        compute_flags,
+        compute_status,
+        format_flags,
+        parse_number,
+        robust_scale,
+        sample_status,
+    )
 except ModuleNotFoundError:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.common import open_text
+    from scripts.maf_stats_report_model import (
+        DEFAULT_MIN_SAMPLES,
+        DEFAULT_RECURRENCE_WINDOW_BP,
+        DEFAULT_Z_THRESHOLD,
+        FLAG_DIRECTIONS,
+        MAD_TO_SD,
+        NA_VALUES,
+        STATUS_ICONS,
+        STATUS_LABELS,
+        STATUS_OK,
+        STATUS_REVIEW,
+        STATUS_UNUSUAL,
+        THRESHOLD_OPTIONS,
+        FlagResult,
+        MetricStats,
+        compute_flags,
+        compute_status,
+        format_flags,
+        parse_number,
+        robust_scale,
+        sample_status,
+    )
 
 
 # ── input schemas ────────────────────────────────────────────────────────────
@@ -195,8 +238,6 @@ OUTPUT_SUMMARY_COLUMNS = SUMMARY_COLUMNS + SUMMARY_EXTRA_COLUMNS
 OUTPUT_BREAKPOINT_COLUMNS = BREAKPOINT_COLUMNS + RECURRENCE_COLUMNS
 OUTPUT_NESTED_COLUMNS = NESTED_COLUMNS + RECURRENCE_COLUMNS
 
-NA_VALUES = frozenset({"", "NA", "NaN", "nan", "None"})
-
 # Free-text names: always shown literally (escaped), never as a muted NA.
 NAME_COLUMNS = frozenset(
     {
@@ -251,60 +292,6 @@ FLOAT_COLUMNS = frozenset(
         "softmasked_pct",
     }
 )
-
-# ── flagging configuration (tune here) ───────────────────────────────────────
-
-MAD_TO_SD = 1.4826
-DEFAULT_MIN_SAMPLES = 5
-DEFAULT_Z_THRESHOLD = 3.5
-DEFAULT_RECURRENCE_WINDOW_BP = 500_000
-
-# Direction in which a metric is "bad". Order here is the order flags are listed,
-# and each gets a strip plot. overlapping_reference_bp and reference_contig_jumps
-# are deliberately absent: AnchorWave aligns each reference chromosome one-to-one
-# with its counterpart, so both are 0 for every sample. They are reported but
-# neither flagged nor plotted.
-FLAG_DIRECTIONS: dict[str, str] = {
-    "aligned_reference_pct": "low",
-    "aligned_query_pct": "low",
-    "identity_pct": "low",
-    "assembly_contig_n50_bp": "low",
-    "overlapping_query_bp": "high",
-    "breakpoints_per_gb_aligned": "high",
-    "breakpoints_private": "high",
-    "assembly_n_pct": "high",
-    "unaligned_contig_bp": "high",
-}
-
-# Absolute lower bound on the robust scale, in the metric's own units. Prevents
-# division by zero and flags on trivially small deviations in tight cohorts.
-SCALE_ABSOLUTE_FLOORS: dict[str, float] = {
-    "aligned_reference_pct": 1.0,
-    "aligned_query_pct": 1.0,
-    "identity_pct": 1.0,
-    "assembly_n_pct": 0.5,
-    "breakpoints_private": 2.0,
-    "breakpoints_per_gb_aligned": 1.0,
-    "overlapping_query_bp": 100_000.0,
-    "assembly_contig_n50_bp": 1_000_000.0,
-    "unaligned_contig_bp": 1_000_000.0,
-}
-
-# Additional scale floor as a fraction of |median| for count-like metrics.
-SCALE_RELATIVE_FLOORS: dict[str, float] = {
-    "breakpoints_per_gb_aligned": 0.05,
-    "overlapping_query_bp": 0.05,
-    "assembly_contig_n50_bp": 0.05,
-    "unaligned_contig_bp": 0.05,
-}
-
-# CLI option dest -> metric for optional absolute thresholds. Direction comes
-# from FLAG_DIRECTIONS.
-THRESHOLD_OPTIONS: dict[str, str] = {
-    "flag_min_aligned_reference": "aligned_reference_pct",
-    "flag_min_identity": "identity_pct",
-    "flag_max_breakpoints_per_gb": "breakpoints_per_gb_aligned",
-}
 
 # Pseudo-column for the assembly table: "major telomeric ends / 2 x major sequences".
 TELOMERE_DISPLAY_COLUMN = "assembly_major_telomeres"
@@ -636,22 +623,6 @@ METRIC_DEFINITIONS: list[tuple[str, str]] = [
 # ── reading ──────────────────────────────────────────────────────────────────
 
 
-def parse_number(raw: str | None) -> float | None:
-    """Parse a TSV numeric cell; ``NA``/empty/non-finite/garbage -> ``None``."""
-    if raw is None:
-        return None
-    text = raw.strip()
-    if text in NA_VALUES:
-        return None
-    try:
-        value = float(text)
-    except ValueError:
-        return None
-    if not math.isfinite(value):
-        return None
-    return value
-
-
 def read_tsv(path: Path, required: list[str]) -> list[dict[str, str]]:
     """Read a headered TSV into dicts, checking that ``required`` columns exist."""
     with open_text(path, "rt") as handle:
@@ -890,155 +861,6 @@ def annotate_nested_recurrence(
         flat[idx]["recurrence_samples"] = str(len(matched))
         flat[idx]["recurrent"] = "true" if matched else "false"
     return flat
-
-
-# ── flagging ─────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class MetricStats:
-    n: int
-    median: float
-    mad: float
-    scale: float
-    relative_enabled: bool
-
-
-STATUS_OK = "ok"
-STATUS_REVIEW = "review"
-STATUS_UNUSUAL = "unusual"
-STATUS_ICONS = {STATUS_OK: "\u2714", STATUS_REVIEW: "\u26a0", STATUS_UNUSUAL: "\u25c6"}
-STATUS_LABELS = {STATUS_OK: "normal", STATUS_REVIEW: "needs review", STATUS_UNUSUAL: "unusual"}
-
-
-@dataclass
-class FlagResult:
-    # per sample (input order): metric -> list of reasons (bad direction or
-    # absolute-threshold failures; these make a sample "review")
-    flags: list[dict[str, list[str]]]
-    stats: dict[str, MetricStats | None] = field(default_factory=dict)
-    # metrics whose relative flagging was skipped -> number of non-NA samples
-    skipped: dict[str, int] = field(default_factory=dict)
-    # per sample: metric -> reasons for |z| > threshold in the GOOD direction
-    unusual: list[dict[str, list[str]]] = field(default_factory=list)
-    # per sample: metric -> robust z (only metrics with relative flagging enabled)
-    z_scores: list[dict[str, float]] = field(default_factory=list)
-
-    @property
-    def status(self) -> list[str]:
-        return compute_status(self)
-
-
-def robust_scale(metric: str, median: float, mad: float) -> float:
-    """``max(1.4826*MAD, absolute floor, relative floor * |median|)``."""
-    scale = MAD_TO_SD * mad
-    scale = max(scale, SCALE_ABSOLUTE_FLOORS.get(metric, 0.0))
-    scale = max(scale, SCALE_RELATIVE_FLOORS.get(metric, 0.0) * abs(median))
-    if not scale > 0:
-        # Defensive: every flaggable metric has a positive absolute floor, but
-        # never divide by zero if a new metric is added without one.
-        scale = 1.0
-    return scale
-
-
-def compute_flags(
-    summaries: list[dict[str, str]],
-    *,
-    min_samples: int = DEFAULT_MIN_SAMPLES,
-    z_threshold: float = DEFAULT_Z_THRESHOLD,
-    thresholds: dict[str, float] | None = None,
-) -> FlagResult:
-    """Compute relative (robust-z) and absolute flags for each sample.
-
-    ``thresholds`` maps metric name -> absolute threshold; the direction is
-    taken from ``FLAG_DIRECTIONS`` (low-is-bad -> flag when value < threshold).
-    Metrics that are NA (or absent) for a sample are skipped for that sample.
-
-    |z| above ``z_threshold`` in the bad direction goes in ``flags``; in the
-    good direction it goes in ``unusual`` (never in ``flags``). Absolute
-    thresholds only ever produce flags.
-    """
-    thresholds = thresholds or {}
-    for metric in thresholds:
-        if metric not in FLAG_DIRECTIONS:
-            raise ValueError(f"No flag direction defined for threshold metric {metric!r}")
-    result = FlagResult(
-        flags=[{} for _ in summaries],
-        unusual=[{} for _ in summaries],
-        z_scores=[{} for _ in summaries],
-    )
-
-    for metric, direction in FLAG_DIRECTIONS.items():
-        values = [parse_number(s.get(metric)) for s in summaries]
-        present = [v for v in values if v is not None]
-
-        stats: MetricStats | None = None
-        if present:
-            med = statistics.median(present)
-            mad = statistics.median(abs(v - med) for v in present)
-            stats = MetricStats(
-                n=len(present),
-                median=med,
-                mad=mad,
-                scale=robust_scale(metric, med, mad),
-                relative_enabled=len(present) >= min_samples,
-            )
-        result.stats[metric] = stats
-        if stats is None or not stats.relative_enabled:
-            result.skipped[metric] = len(present)
-
-        threshold = thresholds.get(metric)
-        for idx, value in enumerate(values):
-            if value is None:
-                continue
-            reasons: list[str] = []
-            if stats is not None and stats.relative_enabled:
-                z = (value - stats.median) / stats.scale
-                result.z_scores[idx][metric] = z
-                tag = "(mad0_floor)" if stats.mad == 0 else ""
-                bad = z < -z_threshold if direction == "low" else z > z_threshold
-                good = z > z_threshold if direction == "low" else z < -z_threshold
-                if bad:
-                    reasons.append(f"robust_z={z:.2f}{tag}")
-                elif good:
-                    result.unusual[idx][metric] = [f"robust_z={z:.2f}{tag}"]
-            if threshold is not None:
-                if direction == "low" and value < threshold:
-                    reasons.append(f"below_threshold_{threshold:g}")
-                elif direction == "high" and value > threshold:
-                    reasons.append(f"above_threshold_{threshold:g}")
-            if reasons:
-                result.flags[idx][metric] = reasons
-    return result
-
-
-def sample_status(
-    sample_flags: dict[str, list[str]], sample_unusual: dict[str, list[str]] | None = None
-) -> str:
-    """``review`` if any flag, else ``unusual`` if any unusual metric, else ``ok``."""
-    if sample_flags:
-        return STATUS_REVIEW
-    if sample_unusual:
-        return STATUS_UNUSUAL
-    return STATUS_OK
-
-
-def compute_status(flag_result: FlagResult) -> list[str]:
-    """Per-sample status (input order): review > unusual > ok."""
-    unusual = flag_result.unusual or [{} for _ in flag_result.flags]
-    return [sample_status(f, u) for f, u in zip(flag_result.flags, unusual)]
-
-
-def format_flags(sample_flags: dict[str, list[str]]) -> str:
-    """``metric:reason;metric:reason`` in FLAG_DIRECTIONS order; '' when none.
-
-    Also used for the ``unusual`` column.
-    """
-    entries: list[str] = []
-    for metric in FLAG_DIRECTIONS:
-        for reason in sample_flags.get(metric, []):
-            entries.append(f"{metric}:{reason}")
-    return ";".join(entries)
 
 
 # ── output TSVs ──────────────────────────────────────────────────────────────

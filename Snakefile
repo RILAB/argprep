@@ -121,7 +121,9 @@ def _code_hash(*relpaths: str) -> str:
 
 
 MAF_STATS_CODE = _code_hash("scripts/maf_stats.py", "scripts/maf_dotplot.py", "scripts/common.py")
-MAF_STATS_REPORT_CODE = _code_hash("scripts/maf_stats_report.py", "scripts/common.py")
+MAF_STATS_REPORT_CODE = _code_hash(
+    "scripts/maf_stats_report.py", "scripts/maf_stats_report_model.py", "scripts/common.py"
+)
 SPLIT_MAF_CODE = _code_hash("scripts/split_maf_by_contig.py", "scripts/common.py")
 MAF_TO_SITES_CODE = _code_hash("scripts/maf_to_sites.py", "scripts/maf_projection.py", "scripts/common.py")
 SUMMARY_REPORT_CODE = _code_hash("scripts/summary_report.py", "scripts/common.py")

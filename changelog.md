@@ -1,9 +1,10 @@
 # Changelog
 
-Versions are git tags. For production runs, check out the most recent **stable**
-release (`git checkout v1.10`). Tags with a `-beta.N` suffix are pre-releases
-for testing new features: `v1.11-beta.1` adds the `maf_qc` alignment-QC stage,
-and feedback on it is welcome.
+Versions are git tags. For production runs, use the newest stable tag listed on
+the [GitHub Releases page](https://github.com/RILAB/argprep/releases). Tags with
+a `-beta.N` suffix are pre-releases for testing new features; see the release
+notes below for their scope and send feedback through GitHub issues.
+
 v1.0 was a full rewrite from the legacy TASSEL/gVCF/GATK pipeline — the
 pre-v1.0 (`v0.x`) entries at the bottom describe that older lineage and do not
 carry forward to the v1.x series.

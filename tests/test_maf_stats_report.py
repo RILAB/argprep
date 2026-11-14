@@ -11,7 +11,6 @@ from scripts.maf_stats_report import (  # noqa: E402
     BREAKPOINT_COLUMNS,
     BY_QUERY_COLUMNS,
     BY_REFERENCE_COLUMNS,
-    FLAG_DIRECTIONS,
     NESTED_COLUMNS,
     NESTED_EXTRA_COLUMNS,
     OUTPUT_BREAKPOINT_COLUMNS,
@@ -22,12 +21,15 @@ from scripts.maf_stats_report import (  # noqa: E402
     annotate_recurrence,
     build_report,
     cluster_shared_features,
-    compute_flags,
-    compute_status,
-    format_flags,
     load_inputs,
     metric_sentence,
     recurrence_counts,
+)
+from scripts.maf_stats_report_model import (  # noqa: E402
+    FLAG_DIRECTIONS,
+    compute_flags,
+    compute_status,
+    format_flags,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

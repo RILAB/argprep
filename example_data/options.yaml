@@ -19,13 +19,15 @@ add_ref: false
 # quality_bed_dir: example_data/quality_beds
 # quality_min: 0.9
 
-# Rule-specific resources
-maf_mem_mb: 96000
-maf_time: "72:00:00"
+# Lightweight resources for this tiny bundled dataset. Production genomes need
+# estimates appropriate to their MAF sizes; see README.md.
+maf_mem_mb: 4000
+maf_time: "00:30:00"
 
-# SLURM profile defaults
-slurm_account: jrigrp
-slurm_partition: high
+# SLURM settings are intentionally site-neutral. Uncomment and replace these
+# only when running the example through profiles/slurm.
+# slurm_account: your_account
+# slurm_partition: your_partition
 
 # First-stage MAF QC (`snakemake ... maf_qc`; never part of the default run).
 # maf_stats_dotplots: flagged        # flagged | all | false

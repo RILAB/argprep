@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,8 +18,13 @@ def _write_pairwise_maf(path: Path, contig: str, ref_seq: str, sample: str, samp
     )
 
 
-def _run_snakemake(tmp_path: Path, config: Path | None, *targets: str) -> subprocess.CompletedProcess[str]:
-    repo_root = Path(__file__).resolve().parents[1]
+def _run_snakemake(
+    tmp_path: Path,
+    config: Path | None,
+    *targets: str,
+    workflow_root: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    repo_root = workflow_root or Path(__file__).resolve().parents[1]
     cmd = [
         sys.executable,
         "-m",
@@ -46,6 +52,28 @@ def _run_snakemake(tmp_path: Path, config: Path | None, *targets: str) -> subpro
         check=False,
         env=env,
     )
+
+
+def _copy_workflow(destination: Path) -> None:
+    """Copy executable workflow code for tests that intentionally edit it."""
+    repo_root = Path(__file__).resolve().parents[1]
+    destination.mkdir()
+    shutil.copy2(repo_root / "Snakefile", destination / "Snakefile")
+    scripts_dir = destination / "scripts"
+    scripts_dir.mkdir()
+    for name in (
+        "__init__.py",
+        "common.py",
+        "maf_dotplot.py",
+        "maf_projection.py",
+        "maf_stats.py",
+        "maf_stats_report.py",
+        "maf_stats_report_model.py",
+        "maf_to_sites.py",
+        "split_maf_by_contig.py",
+        "summary_report.py",
+    ):
+        shutil.copy2(repo_root / "scripts" / name, scripts_dir / name)
 
 
 @pytest.mark.skipif(
@@ -975,10 +1003,138 @@ def test_query_fasta_dir_and_query_fai_dir_are_exclusive(tmp_path: Path) -> None
     importlib.util.find_spec("snakemake") is None,
     reason="snakemake is not installed in the test environment",
 )
-def test_maf_qc_code_hash_param_is_stable_between_runs(tmp_path: Path) -> None:
+def test_maf_qc_code_hash_is_stable_and_model_change_invalidates_report(
+    tmp_path: Path,
+) -> None:
+    workflow_root = tmp_path / "workflow"
+    _copy_workflow(workflow_root)
     config = _maf_qc_fixture(tmp_path)
-    first = _run_snakemake(tmp_path, config, "maf_qc")
+    first = _run_snakemake(
+        tmp_path,
+        config,
+        "maf_qc",
+        workflow_root=workflow_root,
+    )
     assert first.returncode == 0, first.stderr
-    second = _run_snakemake(tmp_path, config, "maf_qc")
+    second = _run_snakemake(
+        tmp_path,
+        config,
+        "maf_qc",
+        workflow_root=workflow_root,
+    )
     assert second.returncode == 0, second.stderr
     assert "Nothing to be done" in (second.stderr + second.stdout)
+
+    model = workflow_root / "scripts" / "maf_stats_report_model.py"
+    model.write_text(
+        model.read_text(encoding="utf-8") + "\n# test-only code-hash change\n",
+        encoding="utf-8",
+    )
+    rerun = _run_snakemake(
+        tmp_path,
+        config,
+        "maf_qc",
+        workflow_root=workflow_root,
+    )
+    assert rerun.returncode == 0, rerun.stderr
+    output = rerun.stderr + rerun.stdout
+    assert "rule maf_stats_report:" in output
+    assert "Params have changed since last execution" in output
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("snakemake") is None,
+    reason="snakemake is not installed in the test environment",
+)
+@pytest.mark.parametrize(
+    ("changed_script", "expected_rules"),
+    [
+        pytest.param(
+            "scripts/split_maf_by_contig.py",
+            ("split_sample_maf",),
+            id="splitter",
+        ),
+        pytest.param(
+            "scripts/maf_to_sites.py",
+            ("direct_maf_sites",),
+            id="site-caller",
+        ),
+        pytest.param(
+            "scripts/maf_projection.py",
+            ("direct_maf_sites",),
+            id="projection-helper",
+        ),
+        pytest.param(
+            "scripts/summary_report.py",
+            ("summary_report",),
+            id="summary-report",
+        ),
+        pytest.param(
+            "scripts/common.py",
+            ("split_sample_maf", "direct_maf_sites", "summary_report"),
+            id="shared-helper",
+        ),
+    ],
+)
+def test_workflow_code_changes_invalidate_shell_wrapped_rules(
+    tmp_path: Path,
+    changed_script: str,
+    expected_rules: tuple[str, ...],
+) -> None:
+    """Every code path listed in a rule hash must trigger that rule again.
+
+    Work in a private workflow copy so this test can change source code without
+    touching the checkout running the test suite.
+    """
+    workflow_root = tmp_path / "workflow"
+    _copy_workflow(workflow_root)
+
+    work_dir = tmp_path / "run"
+    work_dir.mkdir()
+    (work_dir / "ref.fa").write_text(">1\nACGT\n", encoding="utf-8")
+    maf_dir = work_dir / "maf"
+    maf_dir.mkdir()
+    _write_pairwise_maf(maf_dir / "s1.maf", "1", "ACGT", "s1", "ACGT")
+    _write_pairwise_maf(maf_dir / "s2.maf", "1", "ACGT", "s2", "ATGT")
+
+    config = work_dir / "config.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "maf_dir: maf",
+                "reference_fasta: ref.fa",
+                "results_dir: results",
+                'samples: ["s1", "s2"]',
+                'contigs: ["1"]',
+                "max_missing_count: 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    target = str(work_dir / "results" / "summary.html")
+
+    first = _run_snakemake(
+        work_dir,
+        config,
+        target,
+        workflow_root=workflow_root,
+    )
+    assert first.returncode == 0, first.stderr
+
+    script = workflow_root / changed_script
+    script.write_text(
+        script.read_text(encoding="utf-8") + "\n# test-only code-hash change\n",
+        encoding="utf-8",
+    )
+    rerun = _run_snakemake(
+        work_dir,
+        config,
+        target,
+        workflow_root=workflow_root,
+    )
+    assert rerun.returncode == 0, rerun.stderr
+    output = rerun.stderr + rerun.stdout
+    for rule in expected_rules:
+        assert f"rule {rule}:" in output, output
+    assert "Params have changed since last execution" in output

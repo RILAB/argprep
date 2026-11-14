@@ -1,0 +1,39 @@
+# Portable ARGprep configuration template.
+# Copy this file to options.yaml and replace the two required input paths.
+
+# Required inputs
+maf_dir: /path/to/per_sample_mafs
+reference_fasta: /path/to/reference.fa
+
+# Output directory
+results_dir: results
+
+# Site filtering. With neither threshold set, ARGprep allows zero missing
+# samples. Set one or both explicitly when partial coverage should be retained.
+max_missing_count: 0
+# max_missing_fraction: 0.1
+mask_indel_adjacent_snps: false
+allow_multiallelic_snps: true
+add_ref: false
+emit_argweaver_sites: false
+summary_window_bp: 100000
+
+# Optional restrictions; otherwise samples and shared contigs are discovered.
+# samples: [sampleA, sampleB]
+# contigs: [chr1, chr2]
+
+# Optional per-sample assembly-quality masking.
+# quality_bed_dir: /path/to/quality_beds
+# quality_min: 0.9
+
+# Optional SLURM settings. Uncomment only when using profiles/slurm.
+# slurm_account: your_account
+# slurm_partition: your_partition
+# maf_mem_mb: 48000
+# maf_time: "24:00:00"
+
+# Optional MAF QC inputs and resources; see docs/maf_qc.md.
+# query_fasta_dir: /path/to/query_fastas
+# maf_stats_threads: 1
+# maf_stats_mem_mb: 16000
+# maf_stats_time: "12:00:00"

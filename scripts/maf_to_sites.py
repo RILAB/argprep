@@ -22,10 +22,7 @@ import numpy as np
 
 try:
     from scripts.common import (
-        MafRecord,
         iter_maf_blocks,
-        merge_intervals,
-        normalize_contig,
         open_text,
     )
     from scripts.maf_projection import (
@@ -46,10 +43,7 @@ try:
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.common import (
-        MafRecord,
         iter_maf_blocks,
-        merge_intervals,
-        normalize_contig,
         open_text,
     )
     from scripts.maf_projection import (
