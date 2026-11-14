@@ -12,7 +12,7 @@ from scripts.maf_to_fasta import (
     load_sample_alignment,
     merge_insertion,
 )
-from scripts.maf_to_sites import read_contig_length, read_contig_region
+from scripts.maf_projection import read_contig_length, read_contig_region
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "maf_to_fasta.py"
 

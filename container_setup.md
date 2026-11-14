@@ -5,6 +5,10 @@ containers bundle all dependencies, the pipeline code, example data, and the
 full test suite. Tests are run automatically during the build so the image is
 verified before it is produced.
 
+> **Shared clusters (e.g. UC Davis Farm):** build images and run the pipeline or
+> tests on a compute node (`srun`/`sbatch`), not a login node. Building runs the
+> full test suite, and pipeline runs parse large MAFs.
+
 ### Singularity
 
 ```bash
@@ -37,7 +41,8 @@ singularity exec argprep.sif bash -c 'cd /opt/argprep && pytest -q -p no:cachepr
 Our singularity setup defaults to `/tmp` but for HPC users that want to use some variable made available by their HPC admins like `$SCRATCH` then you could re-write your ENV variable:
 
 ```bash
-singularity exec --env XDG_CACHE_HOME=$SCRATCH/argprep_cache argprep.sif
+singularity exec --env XDG_CACHE_HOME=$SCRATCH/argprep_cache argprep.sif \
+  snakemake -j 8 --snakefile /opt/argprep/Snakefile --configfile options.yaml
 ```
 
 ### Docker

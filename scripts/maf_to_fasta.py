@@ -26,15 +26,18 @@ import sys
 from pathlib import Path
 
 try:
-    from scripts.common import normalize_contig, open_text
-    from scripts.maf_to_sites import (
+    from scripts.common import (
+        iter_maf_blocks,
+        normalize_contig,
+        open_text,
+    )
+    from scripts.maf_projection import (
         NUC_TO_CODE,
         QualityMask,
         VALID_BASES,
-        _assign_code,
+        assign_code,
         choose_sample_record,
         discover_samples,
-        iter_maf_blocks,
         load_quality_mask,
         maf_path_for_sample_with_map,
         parse_maf_path_map,
@@ -44,15 +47,18 @@ try:
     )
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.common import normalize_contig, open_text
-    from scripts.maf_to_sites import (
+    from scripts.common import (
+        iter_maf_blocks,
+        normalize_contig,
+        open_text,
+    )
+    from scripts.maf_projection import (
         NUC_TO_CODE,
         QualityMask,
         VALID_BASES,
-        _assign_code,
+        assign_code,
         choose_sample_record,
         discover_samples,
-        iter_maf_blocks,
         load_quality_mask,
         maf_path_for_sample_with_map,
         parse_maf_path_map,
@@ -174,7 +180,7 @@ def parse_args() -> argparse.Namespace:
 def merge_insertion(insertions: dict[int, str], slot: int, seq: str) -> None:
     """Record ``seq`` as the sample's insertion at ``slot``.
 
-    The analogue of :func:`~scripts.maf_to_sites._assign_code` for insertions:
+    The analogue of :func:`~scripts.maf_projection.assign_code` for insertions:
     when two alignment blocks cover the same slot and disagree, there is no
     principled winner, so the slot degrades to unknown bases over the longer of
     the two lengths.
@@ -276,7 +282,7 @@ def load_sample_alignment(
             prev_idx = idx
             previous_ref_seen = True
             if sample_char == GAP:
-                _assign_code(anchors, idx, NUC_TO_CODE["-"])
+                assign_code(anchors, idx, NUC_TO_CODE["-"])
                 continue
 
             if sample_minus:
@@ -286,11 +292,11 @@ def load_sample_alignment(
             sample_offset += 1
 
             if quality_mask is not None and quality_mask.is_low(sample_src, sample_coord):
-                _assign_code(anchors, idx, NUC_TO_CODE[UNKNOWN])
+                assign_code(anchors, idx, NUC_TO_CODE[UNKNOWN])
             elif sample_char in VALID_BASES:
-                _assign_code(anchors, idx, NUC_TO_CODE[sample_char])
+                assign_code(anchors, idx, NUC_TO_CODE[sample_char])
             else:
-                _assign_code(anchors, idx, NUC_TO_CODE[UNKNOWN])
+                assign_code(anchors, idx, NUC_TO_CODE[UNKNOWN])
 
         if pending and prev_idx is not None:
             record_slot(prev_idx, "".join(pending))

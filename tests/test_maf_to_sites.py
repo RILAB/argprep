@@ -7,18 +7,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.maf_to_sites import (
+from scripts.common import iter_maf_blocks
+from scripts.maf_projection import (
     choose_sample_record,
     discover_samples,
-    iter_maf_blocks,
     load_quality_mask,
-    load_sample_calls,
     maf_path_for_sample,
     maf_path_for_sample_with_map,
-    missing_threshold,
     parse_maf_path_map,
     read_contig_sequence,
 )
+from scripts.maf_to_sites import load_sample_calls, missing_threshold
 from scripts.summary_report import read_sample_missing_bp
 from scripts.split_maf_by_contig import main as split_maf_main
 

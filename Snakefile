@@ -111,7 +111,9 @@ MAF_STATS_FLAG_OPTIONS = {
 def _code_hash(*relpaths: str) -> str:
     """Short hash of the scripts a rule runs. Passed as a param so Snakemake
     (whose default rerun triggers include params) redoes the job when the code
-    changes; scripts called from `shell` are otherwise not tracked."""
+    changes; scripts called from `shell` are otherwise not tracked. Every rule
+    that shells out to a script must pass one of these as `params.code`,
+    covering the script and the modules it imports."""
     digest = hashlib.sha256()
     for relpath in relpaths:
         digest.update((Path(workflow.basedir) / relpath).read_bytes())
@@ -120,6 +122,9 @@ def _code_hash(*relpaths: str) -> str:
 
 MAF_STATS_CODE = _code_hash("scripts/maf_stats.py", "scripts/maf_dotplot.py", "scripts/common.py")
 MAF_STATS_REPORT_CODE = _code_hash("scripts/maf_stats_report.py", "scripts/common.py")
+SPLIT_MAF_CODE = _code_hash("scripts/split_maf_by_contig.py", "scripts/common.py")
+MAF_TO_SITES_CODE = _code_hash("scripts/maf_to_sites.py", "scripts/maf_projection.py", "scripts/common.py")
+SUMMARY_REPORT_CODE = _code_hash("scripts/summary_report.py", "scripts/common.py")
 
 # Placeholder resources until real MAFs are benchmarked; override in the config.
 MAF_STATS_DEFAULT_MEM_MB = 16000
@@ -438,6 +443,7 @@ rule split_sample_maf:
     params:
         out_root=str(MAF_CHUNK_ROOT),
         contigs=lambda wc: " ".join(shlex.quote(contig) for contig in _active_contigs()),
+        code=SPLIT_MAF_CODE,
     shell:
         """
         set -euo pipefail
@@ -496,6 +502,7 @@ rule direct_maf_sites:
         quality_min=("" if QUALITY_MIN is None else QUALITY_MIN),
         out_prefix=lambda wc: str(_direct_prefix(wc.contig)),
         window_bp=SUMMARY_WINDOW_BP,
+        code=MAF_TO_SITES_CODE,
     shell:
         """
         set -euo pipefail
@@ -562,6 +569,7 @@ rule summary_report:
         report=str(RESULTS_DIR / "summary.html"),
     params:
         window_bp=SUMMARY_WINDOW_BP,
+        code=SUMMARY_REPORT_CODE,
     shell:
         """
         set -euo pipefail

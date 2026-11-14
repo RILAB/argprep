@@ -115,13 +115,19 @@ Reference-sample behavior:
 
 ## Run
 
-Local:
+Local (laptop, workstation, or an interactive job on a compute node):
 
 ```bash
 snakemake -j 8 --configfile options.yaml
 ```
 
-SLURM (recommended — submit the controller as its own job):
+> **Shared clusters (e.g. UC Davis Farm):** do not run `snakemake` on a login/head
+> node. Building the DAG already reads the MAF files, and a Snakemake controller
+> there competes with other users and is killed when your session ends. Use the
+> SLURM controller job below, or run inside an interactive `srun`/`salloc` session.
+
+SLURM (recommended, and the standard way to run on a cluster — submit the
+controller as its own job):
 
 ```bash
 mkdir -p logs/slurm
@@ -159,8 +165,10 @@ default) and reruns the rule from scratch; the controller waits for it instead
 of aborting the run. The same status command also makes genuinely failed jobs
 (TIMEOUT, OOM, NODE_FAIL, scancel) fail cleanly instead of hanging.
 
-You can still launch the controller directly (e.g. on the head node for a quick
-run), but it is then vulnerable to being killed:
+If you launch the controller yourself instead of using the wrapper, do so from
+inside an interactive allocation on a compute node (not a login node), on a
+non-preemptable partition. It is then still vulnerable to being killed when the
+allocation ends:
 
 ```bash
 snakemake --profile profiles/slurm --configfile options.yaml --rerun-incomplete
