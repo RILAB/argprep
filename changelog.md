@@ -28,6 +28,7 @@ target. Its description moved from the README to [docs/maf_qc.md](docs/maf_qc.md
 
 - `scripts/popstats.py`: a standalone helper that computes pi, Watterson's theta, Tajima's D and a folded, hypergeometrically downsampled SFS from an aligned FASTA with missing data (for example the output of `window_to_fasta.py` or `maf_to_fasta.py`). Per-site sample size is respected: `--min-seqs` filters sites, and pi and theta use each site's own number of called sequences. Optional sliding windows via `--window` / `--overlap`. Verified against tskit on msprime loci with varying sample size (`tests/test_popstats_msprime.py`).
 - `options.example.yaml`: a portable, site-neutral config template (`cp options.example.yaml options.yaml`).
+- `scripts/compare_wgatools.py`: reruns the ARGprep vs. `wgatools call` SNP comparison and records both tools' versions. [WGATOOLS_COMPARISON.md](WGATOOLS_COMPARISON.md) was refreshed with it against v1.12 and wgatools 1.1.0: with no missingness filter, both tools make the same 30,794 SNP calls on the bundled example, with zero REF/ALT mismatches.
 
 ### Changed
 
