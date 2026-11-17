@@ -1336,3 +1336,17 @@ def test_choose_sample_record_ignores_strand_of_other_contigs(tmp_path: Path) ->
     maf = tmp_path / "s1.maf"
     maf.write_text("a\ns chr2 0 4 - 10 ACGT\ns s1 0 4 + 10 ACGT\n\n")
     assert choose_sample_record(next(iter_maf_blocks(maf)), "chr1") is None
+
+
+def test_read_contig_sequence_handles_gzipped_reference_with_fa_name(tmp_path: Path):
+    # Regression: the workflow staged a .fa.gz reference as reference_sites.fa,
+    # and the .fai fast path then seeked uncompressed offsets into gzip bytes.
+    ref = tmp_path / "reference_sites.fa"
+    with gzip.open(ref, "wt", encoding="utf-8") as fh:
+        fh.write(">chr1\nACGTACGT\n>chr2\nGGCC\n")
+    (tmp_path / "reference_sites.fa.fai").write_text(
+        "chr1\t8\t6\t8\t9\nchr2\t4\t21\t4\t5\n", encoding="utf-8"
+    )
+
+    assert read_contig_sequence(ref, "chr1") == "ACGTACGT"
+    assert read_contig_sequence(ref, "chr2") == "GGCC"
