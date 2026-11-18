@@ -9,6 +9,12 @@ v1.0 was a full rewrite from the legacy TASSEL/gVCF/GATK pipeline — the
 pre-v1.0 (`v0.x`) entries at the bottom describe that older lineage and do not
 carry forward to the v1.x series.
 
+## Unreleased
+
+### Fixed
+
+- **Gzipped references now work.** A `.fa.gz` (gzip or bgzip) `reference_fasta` used to be symlinked under a `.fa` name, and reads then seeked uncompressed `.fai` offsets into compressed bytes, failing without a clear error. `prepare_reference` now decompresses a compressed reference into `refs/reference_sites.fa` (its time limit rises from 10 to 30 minutes to allow for this), and `scripts/common.py` detects gzip by magic bytes rather than extension (`is_gzip`). Plain references are still symlinked. ([#48](https://github.com/RILAB/argprep/pull/48))
+
 ## v1.12
 
 `maf_qc` graduates from beta. It was introduced in `v1.11-beta.1`, has since been

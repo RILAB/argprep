@@ -60,7 +60,7 @@ The workflow requires `--configfile` and will fail if it is omitted.
 Required keys:
 
 - `maf_dir`: directory containing `*.maf` or `*.maf.gz`
-- `reference_fasta`: reference FASTA path
+- `reference_fasta`: reference FASTA path. Plain (`.fa`, `.fasta`) and gzip- or bgzip-compressed (`.fa.gz`) references are both accepted; compression is detected from the file contents, not the extension. A compressed reference is decompressed once into `<results_dir>/refs/reference_sites.fa` (and indexed there), so expect that directory to hold a full uncompressed copy of the genome; a plain reference is symlinked instead.
 
 **Input ploidy.** ARGprep treats each MAF as a single haplotype. For diploid individuals with haplotype-resolved assemblies, split the two haplotypes and align each to the reference separately (for example `indA_hap1.maf`, `indA_hap2.maf`), so that each haplotype is a sample. One workflow that produces compatible per-sample MAFs with AnchorWave is [anchorwave-snakemake](https://github.com/mufernando/anchorwave-snakemake); use its whole-genome `<target>.maf` output.
 
