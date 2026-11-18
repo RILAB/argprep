@@ -7,6 +7,22 @@ from pathlib import Path
 from typing import Iterable, Iterator, TextIO
 
 
+GZIP_MAGIC = b"\x1f\x8b"
+
+
+def is_gzip(path: str | Path) -> bool:
+    """True if ``path`` is gzip/bgzip-compressed, judged by its magic bytes.
+
+    The extension is not trusted: the workflow stages inputs under fixed names
+    (e.g. a ``.fa.gz`` reference linked as ``reference_sites.fa``).
+    """
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(2) == GZIP_MAGIC
+    except FileNotFoundError:
+        return str(path).endswith(".gz")
+
+
 def open_text(
     path: str | Path,
     mode: str,
@@ -20,7 +36,7 @@ def open_text(
         kwargs["encoding"] = encoding
         if errors is not None:
             kwargs["errors"] = errors
-    if path_str.endswith(".gz"):
+    if path_str.endswith(".gz") or ("r" in mode and is_gzip(path_str)):
         return gzip.open(path_str, mode, **kwargs)  # type: ignore[arg-type]
     return open(path_str, mode, **kwargs)
 

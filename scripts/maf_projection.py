@@ -12,10 +12,10 @@ import sys
 from pathlib import Path
 
 try:
-    from scripts.common import MafRecord, merge_intervals, normalize_contig, open_text
+    from scripts.common import MafRecord, is_gzip, merge_intervals, normalize_contig, open_text
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.common import MafRecord, merge_intervals, normalize_contig, open_text
+    from scripts.common import MafRecord, is_gzip, merge_intervals, normalize_contig, open_text
 
 
 NUC_TO_CODE = {
@@ -166,7 +166,7 @@ def _read_fai_entry(fai_path: Path, contig: str) -> tuple[int, int, int, int] | 
 
 def read_contig_sequence(reference_fasta: Path, contig: str) -> str:
     fai_path = Path(str(reference_fasta) + ".fai")
-    if fai_path.exists() and not str(reference_fasta).endswith(".gz"):
+    if fai_path.exists() and not is_gzip(reference_fasta):
         entry = _read_fai_entry(fai_path, contig)
         if entry is not None:
             length, offset, linebases, linewidth = entry
@@ -183,7 +183,7 @@ def read_contig_sequence(reference_fasta: Path, contig: str) -> str:
                     f"FAI seek returned {len(seq)} bases for '{contig}', expected {length}"
                 )
             return seq.decode("ascii").upper()
-    # Fallback: linear scan (handles .gz or missing .fai)
+    # Fallback: linear scan (handles gzip/bgzip, detected by magic bytes, or missing .fai)
     seq_parts: list[str] = []
     current: str | None = None
     with open_text(reference_fasta, "rt", errors="ignore") as handle:
@@ -202,7 +202,8 @@ def read_contig_sequence(reference_fasta: Path, contig: str) -> str:
 def read_contig_length(reference_fasta: Path, contig: str) -> int:
     """Length of a reference contig, from the .fai index when one exists."""
     fai_path = Path(str(reference_fasta) + ".fai")
-    if fai_path.exists() and not str(reference_fasta).endswith(".gz"):
+    # .fai lengths are valid for bgzipped FASTA too; only offsets are not.
+    if fai_path.exists():
         entry = _read_fai_entry(fai_path, contig)
         if entry is not None:
             return entry[0]
@@ -221,7 +222,7 @@ def read_contig_region(reference_fasta: Path, contig: str, start: int, end: int)
     if start == end:
         return ""
     fai_path = Path(str(reference_fasta) + ".fai")
-    if fai_path.exists() and not str(reference_fasta).endswith(".gz"):
+    if fai_path.exists() and not is_gzip(reference_fasta):
         entry = _read_fai_entry(fai_path, contig)
         if entry is not None:
             length, offset, linebases, linewidth = entry

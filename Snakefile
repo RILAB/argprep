@@ -408,7 +408,7 @@ ruleorder: combine_sample_missing_masks > direct_maf_sites
 rule prepare_reference:
     resources:
         mem_mb=1000,
-        time="00:10:00",
+        time="00:30:00",
     input:
         ref=str(ORIG_REF_FASTA),
     output:
@@ -417,7 +417,15 @@ rule prepare_reference:
         """
         set -euo pipefail
         mkdir -p "$(dirname "{output.ref}")"
-        ln -s "$(realpath "{input.ref}")" "{output.ref}"
+        # A compressed reference is decompressed rather than symlinked: the
+        # staged name ends in .fa, and downstream code seeks by .fai offsets,
+        # which only work on an uncompressed FASTA.
+        if [ "$(head -c 2 "{input.ref}" | od -An -tx1 | tr -d ' \\n')" = "1f8b" ]; then
+            gzip -dc "{input.ref}" > "{output.ref}.tmp"
+            mv "{output.ref}.tmp" "{output.ref}"
+        else
+            ln -s "$(realpath "{input.ref}")" "{output.ref}"
+        fi
         """
 
 
